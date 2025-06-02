@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const testBtn = document.getElementById('test-btn') as HTMLButtonElement;
   const clearAllBtn = document.getElementById('clear-all-btn') as HTMLButtonElement;
   const clearUsageBtn = document.getElementById('clear-usage-btn') as HTMLButtonElement;
+  const factoryResetBtn = document.getElementById('factory-reset-btn') as HTMLButtonElement;
   const status = document.getElementById('status') as HTMLDivElement;
   const dailyUsageCost = document.getElementById('daily-usage-cost') as HTMLDivElement;
   const dailyUsageRequests = document.getElementById('daily-usage-requests') as HTMLDivElement;
@@ -658,6 +659,67 @@ document.addEventListener('DOMContentLoaded', async () => {
     } finally {
       clearUsageBtn.disabled = false;
       clearUsageBtn.textContent = 'Clear All Usage Data';
+    }
+  });
+
+  factoryResetBtn.addEventListener('click', async () => {
+    const confirmed = confirm(
+      'Are you sure you want to perform a factory reset?\n\n' +
+      'This will permanently remove:\n' +
+      '• Your API key and selected model\n' +
+      '• All CSS customizations from all websites\n' +
+      '• All prompt history\n' +
+      '• All usage statistics and cost tracking\n' +
+      '• All extension settings\n\n' +
+      'This action cannot be undone!'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    factoryResetBtn.disabled = true;
+    factoryResetBtn.textContent = 'Resetting...';
+
+    try {
+      // Clear sync storage (API key and model)
+      await chrome.storage.sync.clear();
+
+      // Get all local storage keys
+      const allStorage = await chrome.storage.local.get(null);
+      const keysToRemove: string[] = [];
+      
+      // Find all PageMagic keys
+      Object.keys(allStorage).forEach(key => {
+        if (key.startsWith('pagemagic_')) {
+          keysToRemove.push(key);
+        }
+      });
+
+      // Remove all PageMagic data
+      if (keysToRemove.length > 0) {
+        await chrome.storage.local.remove(keysToRemove);
+      }
+
+      showStatus('Factory reset complete. Please reload the extension.', 'success');
+      
+      // Refresh all displays
+      await loadModels();
+      await loadUsageInfo();
+      await loadStorageStats();
+      await loadCustomizedSites();
+      
+      // Clear input fields
+      apiKeyInput.value = '';
+      modelSelect.innerHTML = '<option value="">No API Key found</option>';
+      modelSelect.disabled = true;
+      testBtn.disabled = true;
+      
+    } catch (error) {
+      showStatus(`Failed to perform factory reset: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+    } finally {
+      factoryResetBtn.disabled = false;
+      factoryResetBtn.textContent = 'Factory Reset';
     }
   });
 });

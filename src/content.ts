@@ -7,17 +7,17 @@ async function getUrlKey(): Promise<string> {
   
   // Check if domain-wide mode is enabled
   try {
-    const result = await chrome.storage.local.get(['pagebuddy_domain_wide']);
-    const isDomainWide = result.pagebuddy_domain_wide || false;
+    const result = await chrome.storage.local.get(['pagemagic_domain_wide']);
+    const isDomainWide = result.pagemagic_domain_wide || false;
     
     if (isDomainWide) {
-      return `pagebuddy_css_${url.origin}`;
+      return `pagemagic_css_${url.origin}`;
     } else {
-      return `pagebuddy_css_${url.origin}${url.pathname}`;
+      return `pagemagic_css_${url.origin}${url.pathname}`;
     }
   } catch (error) {
     console.warn('Failed to check domain-wide setting, defaulting to page-specific:', error);
-    return `pagebuddy_css_${url.origin}${url.pathname}`;
+    return `pagemagic_css_${url.origin}${url.pathname}`;
   }
 }
 
@@ -47,7 +47,7 @@ async function loadCSSFromStorage() {
       
       // Create style element
       injectedStyleElement = document.createElement('style');
-      injectedStyleElement.setAttribute('data-pagebuddy', 'true');
+      injectedStyleElement.setAttribute('data-pagemagic', 'true');
       injectedStyleElement.textContent = accumulatedCSS.join('\n\n/* --- */\n\n');
       
       // Inject as early as possible to prevent flickering
@@ -130,22 +130,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         
         // Create new style element with all accumulated CSS
         injectedStyleElement = document.createElement('style');
-        injectedStyleElement.setAttribute('data-pagebuddy', 'true');
+        injectedStyleElement.setAttribute('data-pagemagic', 'true');
         injectedStyleElement.textContent = accumulatedCSS.join('\n\n/* --- */\n\n');
         
         // Inject into head using our helper function
         injectStyleElement();
         
         // Debug logging
-        console.log('PageBuddy: Injected CSS:', injectedStyleElement.textContent);
-        console.log('PageBuddy: Style element position in head:', Array.from(document.head.children).indexOf(injectedStyleElement));
+        console.log('PageMagic: Injected CSS:', injectedStyleElement.textContent);
+        console.log('PageMagic: Style element position in head:', Array.from(document.head.children).indexOf(injectedStyleElement));
         
         // Check if code elements exist and log their computed styles
         const codeElements = document.querySelectorAll('code');
         if (codeElements.length > 0) {
           const firstCode = codeElements[0];
           const computedStyle = window.getComputedStyle(firstCode);
-          console.log('PageBuddy: First code element computed font-size:', computedStyle.fontSize);
+          console.log('PageMagic: First code element computed font-size:', computedStyle.fontSize);
         }
         
         // Save to storage for persistence across page refreshes
@@ -199,7 +199,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           
           // Create and inject new style element
           injectedStyleElement = document.createElement('style');
-          injectedStyleElement.setAttribute('data-pagebuddy', 'true');
+          injectedStyleElement.setAttribute('data-pagemagic', 'true');
           injectedStyleElement.textContent = accumulatedCSS.join('\n\n/* --- */\n\n');
           injectStyleElement();
         } else {

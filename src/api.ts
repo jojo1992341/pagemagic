@@ -337,11 +337,11 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
   async trackUsage(model: string, usage: any, cost: number): Promise<void> {
     try {
       const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-      const storageKey = `pagebuddy_usage_${today}`;
+      const storageKey = `pagemagic_usage_${today}`;
       
-      const result = await chrome.storage.local.get([storageKey, 'pagebuddy_total_usage']);
+      const result = await chrome.storage.local.get([storageKey, 'pagemagic_total_usage']);
       const dailyUsage = result[storageKey] || { requests: 0, totalCost: 0, models: {} };
-      const totalUsage = result.pagebuddy_total_usage || { totalCost: 0, totalRequests: 0, models: {} };
+      const totalUsage = result.pagemagic_total_usage || { totalCost: 0, totalRequests: 0, models: {} };
       
       // Update daily usage
       dailyUsage.requests += 1;
@@ -370,7 +370,7 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
       
       await chrome.storage.local.set({
         [storageKey]: dailyUsage,
-        pagebuddy_total_usage: totalUsage
+        pagemagic_total_usage: totalUsage
       });
     } catch (error) {
       console.warn('Failed to track usage:', error);
@@ -379,8 +379,8 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
 
   async getTotalUsage(): Promise<{ totalCost: number; totalRequests: number; models: any }> {
     try {
-      const result = await chrome.storage.local.get(['pagebuddy_total_usage']);
-      return result.pagebuddy_total_usage || { totalCost: 0, totalRequests: 0, models: {} };
+      const result = await chrome.storage.local.get(['pagemagic_total_usage']);
+      return result.pagemagic_total_usage || { totalCost: 0, totalRequests: 0, models: {} };
     } catch (error) {
       console.warn('Failed to get total usage:', error);
       return { totalCost: 0, totalRequests: 0, models: {} };
@@ -390,7 +390,7 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
   async getDailyUsage(date?: string): Promise<any> {
     try {
       const targetDate = date || new Date().toISOString().split('T')[0];
-      const storageKey = `pagebuddy_usage_${targetDate}`;
+      const storageKey = `pagemagic_usage_${targetDate}`;
       const result = await chrome.storage.local.get([storageKey]);
       return result[storageKey] || { requests: 0, totalCost: 0, models: {} };
     } catch (error) {

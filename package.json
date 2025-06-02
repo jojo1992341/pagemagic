@@ -1,7 +1,7 @@
 {
-  "name": "pagebuddy",
+  "name": "pagemagic",
   "version": "1.0.0",
-  "description": "Page Buddy Chrome Extension",
+  "description": "Page Magic Chrome Extension",
   "private": true,
   "scripts": {
     "build": "vite build",

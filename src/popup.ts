@@ -59,9 +59,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const isDomainWide = useDomainWide ?? domainWideCheckbox.checked;
     
     if (isDomainWide) {
-      return `pagebuddy_history_${url.origin}`;
+      return `pagemagic_history_${url.origin}`;
     } else {
-      return `pagebuddy_history_${url.origin}${url.pathname}`;
+      return `pagemagic_history_${url.origin}${url.pathname}`;
     }
   }
   
@@ -136,8 +136,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       const isDomainWide = useDomainWide ?? domainWideCheckbox.checked;
       
       const urlKey = isDomainWide 
-        ? `pagebuddy_css_${url.origin}`
-        : `pagebuddy_css_${url.origin}${url.pathname}`;
+        ? `pagemagic_css_${url.origin}`
+        : `pagemagic_css_${url.origin}${url.pathname}`;
       
       const enabledHistory = history.filter(item => !item.disabled);
       if (enabledHistory.length > 0) {
@@ -272,8 +272,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function loadState() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const result = await chrome.storage.local.get([`pagebuddy_state_${tab.id}`]);
-      const state = result[`pagebuddy_state_${tab.id}`];
+      const result = await chrome.storage.local.get([`pagemagic_state_${tab.id}`]);
+      const state = result[`pagemagic_state_${tab.id}`];
       
       if (state) {
         currentFileId = state.fileId;
@@ -286,8 +286,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       
       // Also check if there are stored customizations for this URL or domain
       const url = new URL(tab.url!);
-      const pageUrlKey = `pagebuddy_css_${url.origin}${url.pathname}`;
-      const domainUrlKey = `pagebuddy_css_${url.origin}`;
+      const pageUrlKey = `pagemagic_css_${url.origin}${url.pathname}`;
+      const domainUrlKey = `pagemagic_css_${url.origin}`;
       const cssResult = await chrome.storage.local.get([pageUrlKey, domainUrlKey]);
       const pageCSS = cssResult[pageUrlKey];
       const domainCSS = cssResult[domainUrlKey];
@@ -318,7 +318,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         fileId: currentFileId,
         hasChanges: hasChanges
       };
-      await chrome.storage.local.set({ [`pagebuddy_state_${tab.id}`]: state });
+      await chrome.storage.local.set({ [`pagemagic_state_${tab.id}`]: state });
     } catch (error) {
       console.warn('Failed to save state:', error);
     }
@@ -379,8 +379,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load domain-wide checkbox state
   async function loadDomainWideState() {
     try {
-      const result = await chrome.storage.local.get(['pagebuddy_domain_wide']);
-      domainWideCheckbox.checked = result.pagebuddy_domain_wide || false;
+      const result = await chrome.storage.local.get(['pagemagic_domain_wide']);
+      domainWideCheckbox.checked = result.pagemagic_domain_wide || false;
     } catch (error) {
       console.warn('Failed to load domain-wide state:', error);
     }
@@ -390,7 +390,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function saveDomainWideState() {
     try {
       await chrome.storage.local.set({ 
-        pagebuddy_domain_wide: domainWideCheckbox.checked 
+        pagemagic_domain_wide: domainWideCheckbox.checked 
       });
     } catch (error) {
       console.warn('Failed to save domain-wide state:', error);
@@ -437,11 +437,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Get the old scope key (opposite of current checkbox state)
     const oldIsDomainWide = !domainWideCheckbox.checked;
     const oldHistoryKey = oldIsDomainWide ? 
-      `pagebuddy_history_${url.origin}` : 
-      `pagebuddy_history_${url.origin}${url.pathname}`;
+      `pagemagic_history_${url.origin}` : 
+      `pagemagic_history_${url.origin}${url.pathname}`;
     const oldCSSKey = oldIsDomainWide ? 
-      `pagebuddy_css_${url.origin}` : 
-      `pagebuddy_css_${url.origin}${url.pathname}`;
+      `pagemagic_css_${url.origin}` : 
+      `pagemagic_css_${url.origin}${url.pathname}`;
     
     // Get data from old scope
     const oldHistoryResult = await chrome.storage.local.get([oldHistoryKey]);
@@ -639,20 +639,20 @@ document.addEventListener('DOMContentLoaded', async () => {
           showStatus('Removing customizations directly...', 'loading');
           
           try {
-            // Inject script to remove PageBuddy styles directly
+            // Inject script to remove PageMagic styles directly
             await chrome.scripting.executeScript({
               target: { tabId: tab.id! },
               func: () => {
-                // Remove all PageBuddy style elements
-                const pagebuddyStyles = document.querySelectorAll('style[data-pagebuddy="true"]');
-                pagebuddyStyles.forEach(style => style.remove());
+                // Remove all PageMagic style elements
+                const pagemagicStyles = document.querySelectorAll('style[data-pagemagic="true"]');
+                pagemagicStyles.forEach(style => style.remove());
               }
             });
             
             // Remove CSS from storage (both page-specific and domain-wide)
             const url = new URL(tab.url!);
-            const pageUrlKey = `pagebuddy_css_${url.origin}${url.pathname}`;
-            const domainUrlKey = `pagebuddy_css_${url.origin}`;
+            const pageUrlKey = `pagemagic_css_${url.origin}${url.pathname}`;
+            const domainUrlKey = `pagemagic_css_${url.origin}`;
             await chrome.storage.local.remove([pageUrlKey, domainUrlKey]);
             
             showStatus('Changes removed', 'success');
@@ -666,8 +666,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           } catch (scriptError) {
             // Final fallback - just remove from storage
             const url = new URL(tab.url!);
-            const pageUrlKey = `pagebuddy_css_${url.origin}${url.pathname}`;
-            const domainUrlKey = `pagebuddy_css_${url.origin}`;
+            const pageUrlKey = `pagemagic_css_${url.origin}${url.pathname}`;
+            const domainUrlKey = `pagemagic_css_${url.origin}`;
             await chrome.storage.local.remove([pageUrlKey, domainUrlKey]);
             
             showStatus('Stored customizations removed. Please refresh the page.', 'success');

@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           models.forEach(model => {
             modelLookup[model.id] = model.display_name;
           });
-          await chrome.storage.local.set({ pagebuddy_model_lookup: modelLookup });
+          await chrome.storage.local.set({ pagemagic_model_lookup: modelLookup });
           
           // Set selected model
           if (result.selectedModel) {
@@ -110,7 +110,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           models.forEach(model => {
             modelLookup[model.id] = model.display_name;
           });
-          await chrome.storage.local.set({ pagebuddy_model_lookup: modelLookup });
+          await chrome.storage.local.set({ pagemagic_model_lookup: modelLookup });
           
           // Reset to first available model
           if (models.length > 0) {
@@ -141,8 +141,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       totalUsageRequests.textContent = `${totalUsage.totalRequests} requests`;
       
       // Get model lookup table
-      const lookupResult = await chrome.storage.local.get(['pagebuddy_model_lookup']);
-      const modelLookup = lookupResult.pagebuddy_model_lookup || {};
+      const lookupResult = await chrome.storage.local.get(['pagemagic_model_lookup']);
+      const modelLookup = lookupResult.pagemagic_model_lookup || {};
       
       // Display daily model breakdown
       modelBreakdownList.innerHTML = '';
@@ -211,13 +211,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function loadStorageStats() {
     try {
       const allStorage = await chrome.storage.local.get(null);
-      const cssKeys = Object.keys(allStorage).filter(key => key.startsWith('pagebuddy_css_'));
-      const historyKeys = Object.keys(allStorage).filter(key => key.startsWith('pagebuddy_history_'));
+      const cssKeys = Object.keys(allStorage).filter(key => key.startsWith('pagemagic_css_'));
+      const historyKeys = Object.keys(allStorage).filter(key => key.startsWith('pagemagic_history_'));
       
       // Calculate domains/websites
       const domains = new Set();
       [...cssKeys, ...historyKeys].forEach(key => {
-        const urlPart = key.replace('pagebuddy_css_', '').replace('pagebuddy_history_', '');
+        const urlPart = key.replace('pagemagic_css_', '').replace('pagemagic_history_', '');
         const domain = urlPart.split('/')[0]; // Get just the domain part
         domains.add(domain);
       });
@@ -259,13 +259,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function loadCustomizedSites() {
     try {
       const allStorage = await chrome.storage.local.get(null);
-      const cssKeys = Object.keys(allStorage).filter(key => key.startsWith('pagebuddy_css_'));
+      const cssKeys = Object.keys(allStorage).filter(key => key.startsWith('pagemagic_css_'));
       
       // Group by domain/site and check if disabled
       const sites = new Map<string, { isEnabled: boolean; isPageSpecific: boolean; cssKey: string }>();
       
       cssKeys.forEach(key => {
-        const urlPart = key.replace('pagebuddy_css_', '');
+        const urlPart = key.replace('pagemagic_css_', '');
         // Check if there's a path after the domain (not just protocol slashes)
         // Domain-wide: https://example.com
         // Page-specific: https://example.com/path
@@ -346,7 +346,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               await chrome.storage.local.set({ [data.cssKey]: [] });
             } else {
               // Enable by restoring from history if available
-              const historyKey = data.cssKey.replace('pagebuddy_css_', 'pagebuddy_history_');
+              const historyKey = data.cssKey.replace('pagemagic_css_', 'pagemagic_history_');
               const historyResult = await chrome.storage.local.get([historyKey]);
               const history = historyResult[historyKey] || [];
               
@@ -419,7 +419,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             deleteButton.textContent = 'Deleting...';
             
             // Remove both CSS and history data for this site
-            const historyKey = data.cssKey.replace('pagebuddy_css_', 'pagebuddy_history_');
+            const historyKey = data.cssKey.replace('pagemagic_css_', 'pagemagic_history_');
             await chrome.storage.local.remove([data.cssKey, historyKey]);
             
             // Refresh the display
@@ -586,10 +586,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       const allStorage = await chrome.storage.local.get(null);
       const keysToRemove: string[] = [];
       
-      // Find all PageBuddy CSS and history keys
+      // Find all PageMagic CSS and history keys
       Object.keys(allStorage).forEach(key => {
-        if (key.startsWith('pagebuddy_css_') || 
-            key.startsWith('pagebuddy_history_')) {
+        if (key.startsWith('pagemagic_css_') || 
+            key.startsWith('pagemagic_history_')) {
           keysToRemove.push(key);
         }
       });
@@ -635,11 +635,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       const allStorage = await chrome.storage.local.get(null);
       const keysToRemove: string[] = [];
       
-      // Find all PageBuddy usage keys
+      // Find all PageMagic usage keys
       Object.keys(allStorage).forEach(key => {
-        if (key.startsWith('pagebuddy_usage_') || 
-            key === 'pagebuddy_total_usage' ||
-            key === 'pagebuddy_model_lookup') {
+        if (key.startsWith('pagemagic_usage_') || 
+            key === 'pagemagic_total_usage' ||
+            key === 'pagemagic_model_lookup') {
           keysToRemove.push(key);
         }
       });

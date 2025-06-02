@@ -48,9 +48,16 @@
       </div>
     </div>
     
-    <div id="usage-breakdown" style="background: white; padding: 15px; border-radius: 4px; border: 1px solid #ddd;">
-      <div style="font-size: 14px; font-weight: 500; margin-bottom: 10px;">Today's Breakdown by Model</div>
-      <div id="model-breakdown-list"></div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+      <div id="usage-breakdown" style="background: white; padding: 15px; border-radius: 4px; border: 1px solid #ddd;">
+        <div style="font-size: 14px; font-weight: 500; margin-bottom: 10px;">Today's Breakdown by Model</div>
+        <div id="model-breakdown-list"></div>
+      </div>
+      
+      <div id="all-time-breakdown" style="background: white; padding: 15px; border-radius: 4px; border: 1px solid #ddd;">
+        <div style="font-size: 14px; font-weight: 500; margin-bottom: 10px;">All Time Breakdown by Model</div>
+        <div id="all-time-breakdown-list"></div>
+      </div>
     </div>
   </div>
   
@@ -79,6 +86,7 @@
     </div>
     
     <button id="clear-all-btn" style="background: #dc3545; border: 1px solid #c82333;">Clear All CSS Data</button>
+    <button id="clear-usage-btn" style="background: #dc3545; border: 1px solid #c82333; margin-left: 10px;">Clear All Usage Data</button>
   </div>
   
   <script type="module" src="dist/settings.js"></script>

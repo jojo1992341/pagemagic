@@ -6,12 +6,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   const saveBtn = document.getElementById('save-btn') as HTMLButtonElement;
   const testBtn = document.getElementById('test-btn') as HTMLButtonElement;
   const clearAllBtn = document.getElementById('clear-all-btn') as HTMLButtonElement;
+  const clearUsageBtn = document.getElementById('clear-usage-btn') as HTMLButtonElement;
   const status = document.getElementById('status') as HTMLDivElement;
   const dailyUsageCost = document.getElementById('daily-usage-cost') as HTMLDivElement;
   const dailyUsageRequests = document.getElementById('daily-usage-requests') as HTMLDivElement;
   const totalUsageCost = document.getElementById('total-usage-cost') as HTMLDivElement;
   const totalUsageRequests = document.getElementById('total-usage-requests') as HTMLDivElement;
   const modelBreakdownList = document.getElementById('model-breakdown-list') as HTMLDivElement;
+  const allTimeBreakdownList = document.getElementById('all-time-breakdown-list') as HTMLDivElement;
   const cssCount = document.getElementById('css-count') as HTMLSpanElement;
   const historyCount = document.getElementById('history-count') as HTMLSpanElement;
   const domainCount = document.getElementById('domain-count') as HTMLSpanElement;
@@ -36,26 +38,33 @@ document.addEventListener('DOMContentLoaded', async () => {
           const models = await anthropicService.getAvailableModels();
           populateModelSelect(models);
           
+          // Store model lookup table for usage display
+          const modelLookup: Record<string, string> = {};
+          models.forEach(model => {
+            modelLookup[model.id] = model.display_name;
+          });
+          await chrome.storage.local.set({ pagebuddy_model_lookup: modelLookup });
+          
           // Set selected model
           if (result.selectedModel) {
             modelSelect.value = result.selectedModel;
-          } else {
-            modelSelect.value = 'claude-3-5-haiku-20241022'; // Default to Haiku
+          } else if (models.length > 0) {
+            modelSelect.value = models[0].id; // Default to first available model
           }
           modelSelect.disabled = false;
+          testBtn.disabled = false;
         }
+      } else {
+        // No API key set
+        modelSelect.innerHTML = '<option value="">No API Key found</option>';
+        modelSelect.disabled = true;
+        testBtn.disabled = true;
       }
     } catch (error) {
       console.warn('Failed to load models:', error);
-      // Populate with fallback models
-      const fallbackModels = [
-        { id: 'claude-3-5-sonnet-20241022', display_name: 'Claude 3.5 Sonnet', type: 'message' },
-        { id: 'claude-3-5-haiku-20241022', display_name: 'Claude 3.5 Haiku', type: 'message' },
-        { id: 'claude-3-opus-20240229', display_name: 'Claude 3 Opus', type: 'message' }
-      ];
-      populateModelSelect(fallbackModels);
-      modelSelect.value = result.selectedModel || 'claude-3-5-haiku-20241022';
-      modelSelect.disabled = false;
+      modelSelect.innerHTML = '<option value="">Failed to load models</option>';
+      modelSelect.disabled = true;
+      testBtn.disabled = true;
     }
   }
 
@@ -95,12 +104,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (initialized) {
           const models = await anthropicService.getAvailableModels();
           populateModelSelect(models);
-          modelSelect.value = 'claude-3-5-haiku-20241022'; // Reset to default
+          
+          // Store model lookup table
+          const modelLookup: Record<string, string> = {};
+          models.forEach(model => {
+            modelLookup[model.id] = model.display_name;
+          });
+          await chrome.storage.local.set({ pagebuddy_model_lookup: modelLookup });
+          
+          // Reset to first available model
+          if (models.length > 0) {
+            modelSelect.value = models[0].id;
+          }
           modelSelect.disabled = false;
+          testBtn.disabled = false;
         }
       } catch (error) {
         console.warn('Failed to reload models:', error);
         modelSelect.innerHTML = '<option value="">Failed to load models</option>';
+        modelSelect.disabled = true;
+        testBtn.disabled = true;
       }
     }
   });
@@ -117,16 +140,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       totalUsageCost.textContent = `$${totalUsage.totalCost.toFixed(4)}`;
       totalUsageRequests.textContent = `${totalUsage.totalRequests} requests`;
       
-      // Display model breakdown
+      // Get model lookup table
+      const lookupResult = await chrome.storage.local.get(['pagebuddy_model_lookup']);
+      const modelLookup = lookupResult.pagebuddy_model_lookup || {};
+      
+      // Display daily model breakdown
       modelBreakdownList.innerHTML = '';
       if (Object.keys(dailyUsage.models || {}).length > 0) {
-        Object.entries(dailyUsage.models).forEach(([model, data]: [string, any]) => {
+        // Sort entries by model name
+        const sortedDailyEntries = Object.entries(dailyUsage.models).sort(([modelIdA], [modelIdB]) => {
+          const modelNameA = modelLookup[modelIdA] || modelIdA;
+          const modelNameB = modelLookup[modelIdB] || modelIdB;
+          return modelNameA.localeCompare(modelNameB);
+        });
+        
+        sortedDailyEntries.forEach(([modelId, data]: [string, any]) => {
           const modelDiv = document.createElement('div');
           modelDiv.style.cssText = 'display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 12px;';
           
-          const modelName = model.includes('sonnet') ? 'Claude Sonnet' :
-                           model.includes('haiku') ? 'Claude Haiku' :
-                           model.includes('opus') ? 'Claude Opus' : model;
+          // Use lookup table for display name, fallback to model ID
+          const modelName = modelLookup[modelId] || modelId;
           
           modelDiv.innerHTML = `
             <span>${modelName}</span>
@@ -137,8 +170,40 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else {
         modelBreakdownList.innerHTML = '<div style="font-size: 12px; color: #999; text-align: center; padding: 10px;">No usage today</div>';
       }
+      
+      // Display all-time model breakdown
+      allTimeBreakdownList.innerHTML = '';
+      if (Object.keys(totalUsage.models || {}).length > 0) {
+        // Sort entries by model name
+        const sortedAllTimeEntries = Object.entries(totalUsage.models).sort(([modelIdA], [modelIdB]) => {
+          const modelNameA = modelLookup[modelIdA] || modelIdA;
+          const modelNameB = modelLookup[modelIdB] || modelIdB;
+          return modelNameA.localeCompare(modelNameB);
+        });
+        
+        sortedAllTimeEntries.forEach(([modelId, data]: [string, any]) => {
+          const modelDiv = document.createElement('div');
+          modelDiv.style.cssText = 'display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 12px;';
+          
+          // Use lookup table for display name, fallback to model ID
+          const modelName = modelLookup[modelId] || modelId;
+          
+          modelDiv.innerHTML = `
+            <span>${modelName}</span>
+            <span>$${data.cost.toFixed(4)} (${data.requests} requests)</span>
+          `;
+          allTimeBreakdownList.appendChild(modelDiv);
+        });
+      } else {
+        allTimeBreakdownList.innerHTML = '<div style="font-size: 12px; color: #999; text-align: center; padding: 10px;">No usage yet</div>';
+      }
+      
+      // Enable/disable Clear All Usage Data button based on whether there's usage data
+      const hasUsageData = totalUsage.totalRequests > 0 || Object.keys(totalUsage.models || {}).length > 0;
+      clearUsageBtn.disabled = !hasUsageData;
     } catch (error) {
       console.warn('Failed to load usage info:', error);
+      clearUsageBtn.disabled = true; // Disable on error
     }
   }
 
@@ -176,12 +241,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       historyCount.textContent = historyKeys.length.toString();
       domainCount.textContent = domains.size.toString();
       totalSize.textContent = formatSize(totalBytes);
+      
+      // Enable/disable Clear All CSS Data button based on whether there's data
+      const hasData = cssKeys.length > 0 || historyKeys.length > 0;
+      clearAllBtn.disabled = !hasData;
     } catch (error) {
       console.warn('Failed to load storage stats:', error);
       cssCount.textContent = 'Error';
       historyCount.textContent = 'Error';
       domainCount.textContent = 'Error';
       totalSize.textContent = 'Error';
+      clearAllBtn.disabled = true; // Disable on error
     }
   }
 
@@ -221,14 +291,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       
       sortedSites.forEach(([site, data]) => {
         const siteDiv = document.createElement('div');
-        siteDiv.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 12px 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px;';
+        siteDiv.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 8px 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px;';
         
         const siteInfo = document.createElement('div');
         siteInfo.style.cssText = 'flex: 1; min-width: 0;';
         
-        const siteName = document.createElement('div');
-        siteName.style.cssText = 'font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+        const siteName = document.createElement('a');
+        siteName.href = site.startsWith('http') ? site : `https://${site}`;
+        siteName.target = '_blank';
+        siteName.rel = 'noopener noreferrer';
+        siteName.style.cssText = 'font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1976d2; text-decoration: none;';
         siteName.textContent = site;
+        
+        // Add hover effect
+        siteName.addEventListener('mouseenter', () => {
+          siteName.style.textDecoration = 'underline';
+        });
+        siteName.addEventListener('mouseleave', () => {
+          siteName.style.textDecoration = 'none';
+        });
         
         const siteType = document.createElement('div');
         siteType.style.cssText = 'font-size: 12px; color: #666; margin-top: 2px;';
@@ -390,9 +471,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     status.className = `status ${type}`;
     status.style.display = 'block';
     
-    setTimeout(() => {
-      status.style.display = 'none';
-    }, 3000);
+    // Only auto-hide success messages, keep errors visible
+    if (type === 'success') {
+      setTimeout(() => {
+        status.style.display = 'none';
+      }, 3000);
+    }
   }
 
   saveBtn.addEventListener('click', async () => {
@@ -427,9 +511,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   testBtn.addEventListener('click', async () => {
     const apiKey = apiKeyInput.value.trim();
+    const selectedModel = modelSelect.value;
     
     if (!apiKey) {
       showStatus('Please enter an API key first', 'error');
+      return;
+    }
+
+    if (!selectedModel) {
+      showStatus('Please select a model first', 'error');
       return;
     }
 
@@ -437,8 +527,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     testBtn.textContent = 'Testing...';
 
     try {
-      // Save key temporarily for test
-      await chrome.storage.sync.set({ anthropicApiKey: apiKey });
+      // Save key and model temporarily for test
+      await chrome.storage.sync.set({ 
+        anthropicApiKey: apiKey,
+        selectedModel: selectedModel
+      });
       
       // Initialize service and test
       const initialized = await anthropicService.initialize();
@@ -514,8 +607,57 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (error) {
       showStatus(`Failed to clear CSS data: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
     } finally {
-      clearAllBtn.disabled = false;
       clearAllBtn.textContent = 'Clear All CSS Data';
+      // Button state will be set by loadStorageStats() call above
+    }
+  });
+
+  clearUsageBtn.addEventListener('click', async () => {
+    const confirmed = confirm(
+      'Are you sure you want to clear ALL usage data?\n\n' +
+      'This will permanently remove:\n' +
+      '• All daily usage statistics\n' +
+      '• All total usage statistics\n' +
+      '• All model usage breakdowns\n' +
+      '• All cost tracking data\n\n' +
+      'This action cannot be undone!'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    clearUsageBtn.disabled = true;
+    clearUsageBtn.textContent = 'Clearing...';
+
+    try {
+      // Get all storage keys
+      const allStorage = await chrome.storage.local.get(null);
+      const keysToRemove: string[] = [];
+      
+      // Find all PageBuddy usage keys
+      Object.keys(allStorage).forEach(key => {
+        if (key.startsWith('pagebuddy_usage_') || 
+            key === 'pagebuddy_total_usage' ||
+            key === 'pagebuddy_model_lookup') {
+          keysToRemove.push(key);
+        }
+      });
+
+      // Remove all usage data
+      if (keysToRemove.length > 0) {
+        await chrome.storage.local.remove(keysToRemove);
+      }
+
+      showStatus(`Successfully cleared ${keysToRemove.length} items of usage data`, 'success');
+      
+      // Refresh usage info display
+      await loadUsageInfo();
+    } catch (error) {
+      showStatus(`Failed to clear usage data: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+    } finally {
+      clearUsageBtn.disabled = false;
+      clearUsageBtn.textContent = 'Clear All Usage Data';
     }
   });
 });

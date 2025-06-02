@@ -9,6 +9,35 @@ interface PromptHistoryItem {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Check for API key first
+  const result = await chrome.storage.sync.get(['anthropicApiKey']);
+  if (!result.anthropicApiKey) {
+    // Show "no API key" message instead of regular UI
+    document.body.innerHTML = `
+      <div style="padding: 20px; text-align: center;">
+        <h3 style="margin: 0 0 10px 0; color: #333;">No API key set</h3>
+        <p style="margin: 0 0 15px 0; color: #666; font-size: 14px;">Go to settings to set your Anthropic API key.</p>
+        <button id="open-settings" style="
+          background: #007bff; 
+          color: white; 
+          border: none; 
+          padding: 8px 16px; 
+          border-radius: 4px; 
+          cursor: pointer; 
+          font-size: 14px;
+        ">Open Settings</button>
+      </div>
+    `;
+    
+    // Add settings button handler
+    const openSettingsBtn = document.getElementById('open-settings');
+    openSettingsBtn?.addEventListener('click', () => {
+      chrome.runtime.openOptionsPage();
+    });
+    
+    return; // Exit early, don't load the rest of the UI
+  }
+
   const promptInput = document.getElementById('prompt-input') as HTMLTextAreaElement;
   const applyButton = document.getElementById('apply-changes') as HTMLButtonElement;
   const undoButton = document.getElementById('undo-changes') as HTMLButtonElement;
@@ -160,7 +189,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             throw new Error(response?.error || 'Failed to reload CSS');
           }
         } catch (error) {
-          showStatus(error instanceof Error ? error.message : 'Failed to toggle change', 'error');
+          showStatus(formatErrorMessage(error) || 'Failed to toggle change', 'error');
         }
       });
       
@@ -188,7 +217,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             throw new Error(response?.error || 'Failed to reload CSS');
           }
         } catch (error) {
-          showStatus(error instanceof Error ? error.message : 'Failed to remove change', 'error');
+          showStatus(formatErrorMessage(error) || 'Failed to remove change', 'error');
         }
       });
       
@@ -220,7 +249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             throw new Error(response?.error || 'Failed to reload CSS');
           }
         } catch (error) {
-          showStatus(error instanceof Error ? error.message : 'Failed to edit change', 'error');
+          showStatus(formatErrorMessage(error) || 'Failed to edit change', 'error');
         }
       });
       
@@ -295,6 +324,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
   
+  function formatErrorMessage(error: any): string {
+    if (error instanceof Error) {
+      // Check if the error message contains a 429 status or rate limit indication
+      if (error.message.includes('429') || error.message.toLowerCase().includes('rate limit')) {
+        return 'Rate limit exceeded.';
+      }
+      return error.message;
+    }
+    return 'Unknown error occurred';
+  }
+
   function showStatus(message: string, type: 'success' | 'error' | 'loading') {
     status.textContent = message;
     status.className = `status ${type}`;
@@ -563,7 +603,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       await saveState(true);
       
     } catch (error) {
-      showStatus(error instanceof Error ? error.message : 'Unknown error occurred', 'error');
+      showStatus(formatErrorMessage(error), 'error');
     } finally {
       setUIProcessing(false);
       applyButton.textContent = 'Apply Changes';
@@ -644,7 +684,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
     } catch (error) {
-      showStatus(error instanceof Error ? error.message : 'Failed to undo changes', 'error');
+      showStatus(formatErrorMessage(error) || 'Failed to undo changes', 'error');
     } finally {
       setUIProcessing(false);
     }

@@ -303,11 +303,12 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
     }
 
     try {
-      const response = await this.client.models.list();
+      const response = await this.client.models.list({ limit: 1000 });
 
       // Filter for models that can be used for messages (type 'model')
       return response.data
         .filter(model => model.type === 'model')
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .map(model => ({
           id: model.id,
           display_name: model.display_name,
@@ -315,12 +316,7 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
         }));
     } catch (error) {
       console.error('Failed to fetch models:', error);
-      // Return default models if API call fails
-      return [
-        { id: 'claude-3-5-sonnet-20241022', display_name: 'Claude 3.5 Sonnet', type: 'message' },
-        { id: 'claude-3-5-haiku-20241022', display_name: 'Claude 3.5 Haiku', type: 'message' },
-        { id: 'claude-3-opus-20240229', display_name: 'Claude 3 Opus', type: 'message' }
-      ];
+      throw error;
     }
   }
 
@@ -345,7 +341,7 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
       
       const result = await chrome.storage.local.get([storageKey, 'pagebuddy_total_usage']);
       const dailyUsage = result[storageKey] || { requests: 0, totalCost: 0, models: {} };
-      const totalUsage = result.pagebuddy_total_usage || { totalCost: 0, totalRequests: 0 };
+      const totalUsage = result.pagebuddy_total_usage || { totalCost: 0, totalRequests: 0, models: {} };
       
       // Update daily usage
       dailyUsage.requests += 1;
@@ -363,6 +359,15 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
       totalUsage.totalCost += cost;
       totalUsage.totalRequests += 1;
       
+      // Update total usage by model
+      if (!totalUsage.models[model]) {
+        totalUsage.models[model] = { requests: 0, cost: 0, tokens: { input: 0, output: 0 } };
+      }
+      totalUsage.models[model].requests += 1;
+      totalUsage.models[model].cost += cost;
+      totalUsage.models[model].tokens.input += usage.input_tokens;
+      totalUsage.models[model].tokens.output += usage.output_tokens;
+      
       await chrome.storage.local.set({
         [storageKey]: dailyUsage,
         pagebuddy_total_usage: totalUsage
@@ -372,13 +377,13 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
     }
   }
 
-  async getTotalUsage(): Promise<{ totalCost: number; totalRequests: number }> {
+  async getTotalUsage(): Promise<{ totalCost: number; totalRequests: number; models: any }> {
     try {
       const result = await chrome.storage.local.get(['pagebuddy_total_usage']);
-      return result.pagebuddy_total_usage || { totalCost: 0, totalRequests: 0 };
+      return result.pagebuddy_total_usage || { totalCost: 0, totalRequests: 0, models: {} };
     } catch (error) {
       console.warn('Failed to get total usage:', error);
-      return { totalCost: 0, totalRequests: 0 };
+      return { totalCost: 0, totalRequests: 0, models: {} };
     }
   }
 

@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Page Buddy",
+  "short_name": "pagebuddy",
+  "version": "1.0.0",
+  "description": "Page Buddy Chrome Extension",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://api.anthropic.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Page Buddy"
+  },
+  "options_page": "settings.html",
+  "background": {
+    "service_worker": "dist/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dist/content.js"]
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Page Buddy Settings</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 600px;
+      margin: 40px auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    
+    h1 {
+      color: #1976d2;
+      margin-bottom: 30px;
+    }
+    
+    .form-group {
+      margin-bottom: 20px;
+    }
+    
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    
+    input[type="password"], select {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    
+    input[type="password"] {
+      font-family: monospace;
+    }
+    
+    input[type="password"]:focus, select:focus {
+      outline: none;
+      border-color: #1976d2;
+    }
+    
+    select:disabled {
+      background: #f5f5f5;
+      color: #999;
+    }
+    
+    button {
+      background: #1976d2;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 10px;
+    }
+    
+    button:hover {
+      background: #1565c0;
+    }
+    
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    
+    .status {
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 4px;
+      display: none;
+    }
+    
+    .status.success {
+      background: #e8f5e8;
+      color: #2e7d32;
+      border: 1px solid #4caf50;
+    }
+    
+    .status.error {
+      background: #ffeaa7;
+      color: #d63031;
+      border: 1px solid #e17055;
+    }
+    
+    .help-text {
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Page Buddy Settings</h1>
+  
+  <div class="form-group">
+    <label for="api-key">Anthropic API Key:</label>
+    <input type="password" id="api-key" placeholder="sk-ant-api03-..." />
+    <div class="help-text">
+      Get your API key from <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com/settings/keys</a>
+    </div>
+  </div>
+  
+  <div class="form-group">
+    <label for="model-select">Model:</label>
+    <select id="model-select" disabled>
+      <option value="">Loading models...</option>
+    </select>
+    <div class="help-text">
+      Choose the Anthropic model to use for generating CSS
+    </div>
+  </div>
+  
+  <button id="save-btn">Save Settings</button>
+  <button id="test-btn">Test Connection</button>
+  
+  <div id="status" class="status"></div>
+  
+  <script type="module" src="dist/settings.js"></script>
+</body>
+</html>

@@ -5,6 +5,7 @@ interface PromptHistoryItem {
   prompt: string;
   css: string;
   timestamp: number;
+  disabled?: boolean;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -14,15 +15,25 @@ document.addEventListener('DOMContentLoaded', async () => {
   const status = document.getElementById('status') as HTMLDivElement;
   const historySection = document.getElementById('history-section') as HTMLDivElement;
   const historyList = document.getElementById('history-list') as HTMLDivElement;
+  const dailyCost = document.getElementById('daily-cost') as HTMLSpanElement;
+  const totalCost = document.getElementById('total-cost') as HTMLSpanElement;
+  const settingsLink = document.getElementById('settings-link') as HTMLAnchorElement;
+  const domainWideCheckbox = document.getElementById('domain-wide') as HTMLInputElement;
   
   let currentFileId: string | null = null;
   let currentTabId: number | null = null;
   
   // Get current URL key for storage
-  async function getCurrentUrlKey(): Promise<string> {
+  async function getCurrentUrlKey(useDomainWide?: boolean): Promise<string> {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const url = new URL(tab.url!);
-    return `pagebuddy_history_${url.origin}${url.pathname}`;
+    const isDomainWide = useDomainWide ?? domainWideCheckbox.checked;
+    
+    if (isDomainWide) {
+      return `pagebuddy_history_${url.origin}`;
+    } else {
+      return `pagebuddy_history_${url.origin}${url.pathname}`;
+    }
   }
   
   // Get prompt history for current URL
@@ -58,6 +69,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     history.push(newItem);
     await savePromptHistory(history);
+    
+    // Update the CSS storage to reflect the new history
+    await updateCSSStorage(history);
     await displayHistory();
   }
   
@@ -72,15 +86,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     await displayHistory();
   }
   
+  // Toggle disabled state of a history item
+  async function toggleDisabled(id: string): Promise<void> {
+    const history = await getPromptHistory();
+    const updatedHistory = history.map(item => 
+      item.id === id ? { ...item, disabled: !item.disabled } : item
+    );
+    await savePromptHistory(updatedHistory);
+    
+    // Update the CSS storage to reflect the change
+    await updateCSSStorage(updatedHistory);
+    await displayHistory();
+  }
+  
   // Update CSS storage with current history
-  async function updateCSSStorage(history: PromptHistoryItem[]): Promise<void> {
+  async function updateCSSStorage(history: PromptHistoryItem[], useDomainWide?: boolean): Promise<void> {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const url = new URL(tab.url!);
-      const urlKey = `pagebuddy_css_${url.origin}${url.pathname}`;
+      const isDomainWide = useDomainWide ?? domainWideCheckbox.checked;
       
-      if (history.length > 0) {
-        const cssArray = history.map(item => item.css);
+      const urlKey = isDomainWide 
+        ? `pagebuddy_css_${url.origin}`
+        : `pagebuddy_css_${url.origin}${url.pathname}`;
+      
+      const enabledHistory = history.filter(item => !item.disabled);
+      if (enabledHistory.length > 0) {
+        const cssArray = enabledHistory.map(item => item.css);
         await chrome.storage.local.set({ [urlKey]: cssArray });
       } else {
         await chrome.storage.local.remove(urlKey);
@@ -110,6 +142,28 @@ document.addEventListener('DOMContentLoaded', async () => {
       promptDiv.className = 'history-prompt';
       promptDiv.textContent = item.prompt;
       
+      const buttonContainer = document.createElement('div');
+      buttonContainer.className = 'history-buttons';
+      
+      const disableButton = document.createElement('button');
+      disableButton.className = 'history-disable';
+      disableButton.textContent = item.disabled ? 'Enable' : 'Disable';
+      disableButton.addEventListener('click', async () => {
+        try {
+          await toggleDisabled(item.id);
+          
+          // Reapply CSS changes to reflect the toggle
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          const response = await chrome.tabs.sendMessage(tab.id!, { action: 'reloadCSS' });
+          
+          if (!response?.success) {
+            throw new Error(response?.error || 'Failed to reload CSS');
+          }
+        } catch (error) {
+          showStatus(error instanceof Error ? error.message : 'Failed to toggle change', 'error');
+        }
+      });
+      
       const deleteButton = document.createElement('button');
       deleteButton.className = 'history-delete';
       deleteButton.textContent = 'Remove';
@@ -138,8 +192,49 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       });
       
+      const editButton = document.createElement('button');
+      editButton.className = 'history-edit';
+      editButton.textContent = 'Edit';
+      editButton.addEventListener('click', async () => {
+        try {
+          // Remove from history
+          await removeFromHistory(item.id);
+          
+          // Put prompt back in text area
+          promptInput.value = item.prompt;
+          
+          // Focus the text area for immediate editing
+          promptInput.focus();
+          
+          // Reapply remaining CSS changes
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          const response = await chrome.tabs.sendMessage(tab.id!, { action: 'reloadCSS' });
+          
+          if (response?.success) {
+            // Update undo button visibility
+            const updatedHistory = await getPromptHistory();
+            if (updatedHistory.length === 0) {
+              undoButton.style.display = 'none';
+            }
+          } else {
+            throw new Error(response?.error || 'Failed to reload CSS');
+          }
+        } catch (error) {
+          showStatus(error instanceof Error ? error.message : 'Failed to edit change', 'error');
+        }
+      });
+      
+      buttonContainer.appendChild(disableButton);
+      buttonContainer.appendChild(editButton);
+      buttonContainer.appendChild(deleteButton);
+      
+      // Apply disabled styling to the prompt if disabled
+      if (item.disabled) {
+        historyItem.classList.add('disabled');
+      }
+      
       historyItem.appendChild(promptDiv);
-      historyItem.appendChild(deleteButton);
+      historyItem.appendChild(buttonContainer);
       historyList.appendChild(historyItem);
     });
   }
@@ -160,18 +255,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
       
-      // Also check if there are stored customizations for this URL
+      // Also check if there are stored customizations for this URL or domain
       const url = new URL(tab.url!);
-      const urlKey = `pagebuddy_css_${url.origin}${url.pathname}`;
-      const cssResult = await chrome.storage.local.get([urlKey]);
-      const storedCSS = cssResult[urlKey];
+      const pageUrlKey = `pagebuddy_css_${url.origin}${url.pathname}`;
+      const domainUrlKey = `pagebuddy_css_${url.origin}`;
+      const cssResult = await chrome.storage.local.get([pageUrlKey, domainUrlKey]);
+      const pageCSS = cssResult[pageUrlKey];
+      const domainCSS = cssResult[domainUrlKey];
       
-      if (storedCSS && Array.isArray(storedCSS) && storedCSS.length > 0) {
+      if ((pageCSS && Array.isArray(pageCSS) && pageCSS.length > 0) ||
+          (domainCSS && Array.isArray(domainCSS) && domainCSS.length > 0)) {
         undoButton.style.display = 'inline-block';
       }
       
+      // Load domain-wide checkbox state FIRST (needed for history display)
+      await loadDomainWideState();
+      
       // Load and display prompt history
       await displayHistory();
+      
+      // Load usage information
+      await loadUsageInfo();
     } catch (error) {
       console.warn('Failed to load state:', error);
     }
@@ -204,6 +308,55 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // Disable/enable UI during processing
+  function setUIProcessing(processing: boolean) {
+    applyButton.disabled = processing;
+    undoButton.disabled = processing;
+    promptInput.readOnly = processing;
+    
+    if (processing) {
+      promptInput.style.opacity = '0.6';
+      promptInput.style.cursor = 'not-allowed';
+    } else {
+      promptInput.style.opacity = '1';
+      promptInput.style.cursor = 'text';
+    }
+  }
+
+  // Load and display usage information
+  async function loadUsageInfo() {
+    try {
+      const totalUsage = await anthropicService.getTotalUsage();
+      const dailyUsage = await anthropicService.getDailyUsage();
+      
+      dailyCost.textContent = `$${dailyUsage.totalCost.toFixed(4)}`;
+      totalCost.textContent = `$${totalUsage.totalCost.toFixed(4)}`;
+    } catch (error) {
+      console.warn('Failed to load usage info:', error);
+    }
+  }
+
+  // Load domain-wide checkbox state
+  async function loadDomainWideState() {
+    try {
+      const result = await chrome.storage.local.get(['pagebuddy_domain_wide']);
+      domainWideCheckbox.checked = result.pagebuddy_domain_wide || false;
+    } catch (error) {
+      console.warn('Failed to load domain-wide state:', error);
+    }
+  }
+
+  // Save domain-wide checkbox state
+  async function saveDomainWideState() {
+    try {
+      await chrome.storage.local.set({ 
+        pagebuddy_domain_wide: domainWideCheckbox.checked 
+      });
+    } catch (error) {
+      console.warn('Failed to save domain-wide state:', error);
+    }
+  }
+
   // Cleanup function
   async function cleanup() {
     if (currentFileId) {
@@ -230,6 +383,53 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Focus the textarea when popup opens
   promptInput?.focus();
 
+  // Settings link handler
+  settingsLink?.addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.runtime.openOptionsPage();
+  });
+
+  // Domain-wide checkbox handler
+  domainWideCheckbox?.addEventListener('change', async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const url = new URL(tab.url!);
+    
+    // Get the old scope key (opposite of current checkbox state)
+    const oldIsDomainWide = !domainWideCheckbox.checked;
+    const oldHistoryKey = oldIsDomainWide ? 
+      `pagebuddy_history_${url.origin}` : 
+      `pagebuddy_history_${url.origin}${url.pathname}`;
+    const oldCSSKey = oldIsDomainWide ? 
+      `pagebuddy_css_${url.origin}` : 
+      `pagebuddy_css_${url.origin}${url.pathname}`;
+    
+    // Get data from old scope
+    const oldHistoryResult = await chrome.storage.local.get([oldHistoryKey]);
+    const oldHistory = oldHistoryResult[oldHistoryKey] || [];
+    
+    // Save the new domain-wide preference
+    await saveDomainWideState();
+    
+    // If there's data in the old scope, migrate it to the new scope
+    if (oldHistory.length > 0) {
+      // Save history to new scope
+      await savePromptHistory(oldHistory);
+      
+      // Update CSS storage for the new scope
+      await updateCSSStorage(oldHistory);
+      
+      // Clean up old scope data
+      await chrome.storage.local.remove([oldHistoryKey, oldCSSKey]);
+    } else {
+      // No migration needed, just update CSS storage for current (empty) history
+      const currentHistory = await getPromptHistory();
+      await updateCSSStorage(currentHistory);
+    }
+    
+    // Refresh history display since scope might have changed
+    await displayHistory();
+  });
+
   // Cleanup when popup/window is closed
   window.addEventListener('beforeunload', cleanup);
   document.addEventListener('visibilitychange', () => {
@@ -247,7 +447,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     try {
-      applyButton.disabled = true;
+      setUIProcessing(true);
       applyButton.textContent = 'Applying...';
       
       // Get current tab
@@ -348,11 +548,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         throw new Error(injectResponse?.error || 'Failed to apply changes');
       }
 
-      showStatus('Changes applied successfully!', 'success');
+      showStatus('Changes applied.', 'success');
       undoButton.style.display = 'inline-block';
       
       // Add to history
       await addToHistory(prompt, cssResponse.css);
+      
+      // Update usage display
+      await loadUsageInfo();
       
       promptInput.value = '';
       
@@ -362,13 +565,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (error) {
       showStatus(error instanceof Error ? error.message : 'Unknown error occurred', 'error');
     } finally {
-      applyButton.disabled = false;
+      setUIProcessing(false);
       applyButton.textContent = 'Apply Changes';
     }
   });
 
   undoButton?.addEventListener('click', async () => {
     try {
+      setUIProcessing(true);
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       
       showStatus('Removing changes...', 'loading');
@@ -405,10 +609,11 @@ document.addEventListener('DOMContentLoaded', async () => {
               }
             });
             
-            // Remove CSS from storage
+            // Remove CSS from storage (both page-specific and domain-wide)
             const url = new URL(tab.url!);
-            const urlKey = `pagebuddy_css_${url.origin}${url.pathname}`;
-            await chrome.storage.local.remove(urlKey);
+            const pageUrlKey = `pagebuddy_css_${url.origin}${url.pathname}`;
+            const domainUrlKey = `pagebuddy_css_${url.origin}`;
+            await chrome.storage.local.remove([pageUrlKey, domainUrlKey]);
             
             showStatus('Changes removed', 'success');
             undoButton.style.display = 'none';
@@ -421,8 +626,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           } catch (scriptError) {
             // Final fallback - just remove from storage
             const url = new URL(tab.url!);
-            const urlKey = `pagebuddy_css_${url.origin}${url.pathname}`;
-            await chrome.storage.local.remove(urlKey);
+            const pageUrlKey = `pagebuddy_css_${url.origin}${url.pathname}`;
+            const domainUrlKey = `pagebuddy_css_${url.origin}`;
+            await chrome.storage.local.remove([pageUrlKey, domainUrlKey]);
             
             showStatus('Stored customizations removed. Please refresh the page.', 'success');
             undoButton.style.display = 'none';
@@ -439,6 +645,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     } catch (error) {
       showStatus(error instanceof Error ? error.message : 'Failed to undo changes', 'error');
+    } finally {
+      setUIProcessing(false);
     }
   });
 

@@ -7,6 +7,13 @@ interface CSSGenerationRequest {
 
 interface CSSGenerationResponse {
   css: string;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+    cost: number;
+  };
 }
 
 interface FileUploadResponse {
@@ -21,6 +28,104 @@ interface Model {
 
 interface ModelsResponse {
   data: Model[];
+}
+
+// Model pricing per million tokens
+const MODEL_PRICING: Record<string, { 
+  input: number; 
+  output: number; 
+  cache_5m: number; 
+  cache_1h: number; 
+  cache_hits: number; 
+}> = {
+  'claude-opus-4-20241022': { 
+    input: 15, 
+    output: 75, 
+    cache_5m: 18.75, 
+    cache_1h: 30, 
+    cache_hits: 1.50 
+  },
+  'claude-sonnet-4-20250514': { 
+    input: 3, 
+    output: 15, 
+    cache_5m: 3.75, 
+    cache_1h: 6, 
+    cache_hits: 0.30 
+  },
+  'claude-3-5-sonnet-20241022': { 
+    input: 3, 
+    output: 15, 
+    cache_5m: 3.75, 
+    cache_1h: 6, 
+    cache_hits: 0.30 
+  },
+  'claude-3-5-haiku-20241022': { 
+    input: 0.80, 
+    output: 4, 
+    cache_5m: 1, 
+    cache_1h: 1.6, 
+    cache_hits: 0.08 
+  },
+  'claude-3-opus-20240229': { 
+    input: 15, 
+    output: 75, 
+    cache_5m: 18.75, 
+    cache_1h: 30, 
+    cache_hits: 1.50 
+  },
+  'claude-3-haiku-20240307': { 
+    input: 0.25, 
+    output: 1.25, 
+    cache_5m: 0.30, 
+    cache_1h: 0.50, 
+    cache_hits: 0.03 
+  },
+  // Default fallback pricing (use Sonnet 3.5 rates)
+  'default': { 
+    input: 3, 
+    output: 15, 
+    cache_5m: 3.75, 
+    cache_1h: 6, 
+    cache_hits: 0.30 
+  }
+};
+
+function calculateCost(
+  model: string, 
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation?: {
+      ephemeral_5m_input_tokens?: number;
+      ephemeral_1h_input_tokens?: number;
+    };
+  }
+): number {
+  const pricing = MODEL_PRICING[model] || MODEL_PRICING.default;
+  
+  const inputCost = (usage.input_tokens / 1_000_000) * pricing.input;
+  const outputCost = (usage.output_tokens / 1_000_000) * pricing.output;
+  
+  let cacheCost = 0;
+  
+  // Cache creation costs
+  if (usage.cache_creation) {
+    if (usage.cache_creation.ephemeral_5m_input_tokens) {
+      cacheCost += (usage.cache_creation.ephemeral_5m_input_tokens / 1_000_000) * pricing.cache_5m;
+    }
+    if (usage.cache_creation.ephemeral_1h_input_tokens) {
+      cacheCost += (usage.cache_creation.ephemeral_1h_input_tokens / 1_000_000) * pricing.cache_1h;
+    }
+  }
+  
+  // Cache read costs (hits)
+  if (usage.cache_read_input_tokens) {
+    cacheCost += (usage.cache_read_input_tokens / 1_000_000) * pricing.cache_hits;
+  }
+  
+  return inputCost + outputCost + cacheCost;
 }
 
 export class AnthropicService {
@@ -73,7 +178,7 @@ export class AnthropicService {
       throw new Error('Anthropic client not initialized');
     }
 
-    const systemPrompt = `You are a CSS expert. Given an HTML page and a user request, generate CSS rules that will apply the requested changes to the page. 
+    const systemPromptText = `You are a CSS expert. Given an HTML page and a user request, generate CSS rules that will apply the requested changes to the page. 
 
 CRITICAL: Respond with CSS rules ONLY. Do not include any explanations, descriptions, or text outside of CSS rules.
 
@@ -97,16 +202,7 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
       throw new Error('File ID is required - HTML must be uploaded first');
     }
 
-    const messageContent: any[] = [
-      { type: 'text', text: `User request: ${request.prompt}\n\nGenerate CSS rules to fulfill this request based on the HTML file:` },
-      { 
-        type: 'document', 
-        source: { 
-          type: 'file', 
-          file_id: request.fileId 
-        }
-      }
-    ];
+    const message = request.prompt;
 
     // Get the selected model from storage, default to haiku
     const modelResult = await chrome.storage.sync.get(['selectedModel']);
@@ -115,11 +211,26 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
     const response = await this.client.beta.messages.create({
       model: selectedModel,
       max_tokens: 1024,
-      system: systemPrompt,
+      system: systemPromptText,
       messages: [
         {
           role: 'user',
-          content: messageContent
+          content: [
+            {
+              type: 'document',
+              source: {
+                type: 'file',
+                file_id: request.fileId
+              },
+              cache_control: {
+                type: 'ephemeral'
+              }
+            },
+            {
+              type: 'text',
+              text: message
+            }
+          ]
         }
       ],
       betas: ['files-api-2025-04-14']
@@ -168,8 +279,21 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
       cleanCSS = cssLines.join('\n').trim();
     }
     
+    // Calculate cost
+    const cost = calculateCost(selectedModel, response.usage);
+    
+    // Track usage for this request
+    await this.trackUsage(selectedModel, response.usage, cost);
+    
     return {
-      css: cleanCSS.trim()
+      css: cleanCSS.trim(),
+      usage: {
+        input_tokens: response.usage.input_tokens,
+        output_tokens: response.usage.output_tokens,
+        cache_creation_input_tokens: response.usage.cache_creation_input_tokens,
+        cache_read_input_tokens: response.usage.cache_read_input_tokens,
+        cost: cost
+      }
     };
   }
 
@@ -211,6 +335,62 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
       });
     } catch (error) {
       console.warn('Failed to delete file:', error);
+    }
+  }
+
+  async trackUsage(model: string, usage: any, cost: number): Promise<void> {
+    try {
+      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+      const storageKey = `pagebuddy_usage_${today}`;
+      
+      const result = await chrome.storage.local.get([storageKey, 'pagebuddy_total_usage']);
+      const dailyUsage = result[storageKey] || { requests: 0, totalCost: 0, models: {} };
+      const totalUsage = result.pagebuddy_total_usage || { totalCost: 0, totalRequests: 0 };
+      
+      // Update daily usage
+      dailyUsage.requests += 1;
+      dailyUsage.totalCost += cost;
+      
+      if (!dailyUsage.models[model]) {
+        dailyUsage.models[model] = { requests: 0, cost: 0, tokens: { input: 0, output: 0 } };
+      }
+      dailyUsage.models[model].requests += 1;
+      dailyUsage.models[model].cost += cost;
+      dailyUsage.models[model].tokens.input += usage.input_tokens;
+      dailyUsage.models[model].tokens.output += usage.output_tokens;
+      
+      // Update total usage
+      totalUsage.totalCost += cost;
+      totalUsage.totalRequests += 1;
+      
+      await chrome.storage.local.set({
+        [storageKey]: dailyUsage,
+        pagebuddy_total_usage: totalUsage
+      });
+    } catch (error) {
+      console.warn('Failed to track usage:', error);
+    }
+  }
+
+  async getTotalUsage(): Promise<{ totalCost: number; totalRequests: number }> {
+    try {
+      const result = await chrome.storage.local.get(['pagebuddy_total_usage']);
+      return result.pagebuddy_total_usage || { totalCost: 0, totalRequests: 0 };
+    } catch (error) {
+      console.warn('Failed to get total usage:', error);
+      return { totalCost: 0, totalRequests: 0 };
+    }
+  }
+
+  async getDailyUsage(date?: string): Promise<any> {
+    try {
+      const targetDate = date || new Date().toISOString().split('T')[0];
+      const storageKey = `pagebuddy_usage_${targetDate}`;
+      const result = await chrome.storage.local.get([storageKey]);
+      return result[storageKey] || { requests: 0, totalCost: 0, models: {} };
+    } catch (error) {
+      console.warn('Failed to get daily usage:', error);
+      return { requests: 0, totalCost: 0, models: {} };
     }
   }
 }

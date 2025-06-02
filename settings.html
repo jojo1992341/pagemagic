@@ -3,98 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>Page Buddy Settings</title>
-  <style>
-    body {
-      font-family: system-ui, -apple-system, sans-serif;
-      max-width: 600px;
-      margin: 40px auto;
-      padding: 20px;
-      line-height: 1.6;
-    }
-    
-    h1 {
-      color: #1976d2;
-      margin-bottom: 30px;
-    }
-    
-    .form-group {
-      margin-bottom: 20px;
-    }
-    
-    label {
-      display: block;
-      margin-bottom: 8px;
-      font-weight: 500;
-    }
-    
-    input[type="password"], select {
-      width: 100%;
-      padding: 12px;
-      border: 2px solid #ddd;
-      border-radius: 6px;
-      font-size: 14px;
-      box-sizing: border-box;
-    }
-    
-    input[type="password"] {
-      font-family: monospace;
-    }
-    
-    input[type="password"]:focus, select:focus {
-      outline: none;
-      border-color: #1976d2;
-    }
-    
-    select:disabled {
-      background: #f5f5f5;
-      color: #999;
-    }
-    
-    button {
-      background: #1976d2;
-      color: white;
-      border: none;
-      padding: 12px 24px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 14px;
-      margin-right: 10px;
-    }
-    
-    button:hover {
-      background: #1565c0;
-    }
-    
-    button:disabled {
-      background: #ccc;
-      cursor: not-allowed;
-    }
-    
-    .status {
-      margin-top: 15px;
-      padding: 10px;
-      border-radius: 4px;
-      display: none;
-    }
-    
-    .status.success {
-      background: #e8f5e8;
-      color: #2e7d32;
-      border: 1px solid #4caf50;
-    }
-    
-    .status.error {
-      background: #ffeaa7;
-      color: #d63031;
-      border: 1px solid #e17055;
-    }
-    
-    .help-text {
-      font-size: 12px;
-      color: #666;
-      margin-top: 5px;
-    }
-  </style>
+  <link rel="stylesheet" href="settings.css">
 </head>
 <body>
   <h1>Page Buddy Settings</h1>
@@ -121,6 +30,56 @@
   <button id="test-btn">Test Connection</button>
   
   <div id="status" class="status"></div>
+  
+  <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 6px;">
+    <h2 style="font-size: 18px; margin: 0 0 15px 0; color: #1976d2;">Usage & Costs</h2>
+    
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+      <div style="padding: 12px; background: white; border-radius: 4px; border: 1px solid #ddd;">
+        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Today's Usage</div>
+        <div id="daily-usage-cost" style="font-size: 18px; font-weight: 600; color: #1976d2;">$0.00</div>
+        <div id="daily-usage-requests" style="font-size: 12px; color: #666;">0 requests</div>
+      </div>
+      
+      <div style="padding: 12px; background: white; border-radius: 4px; border: 1px solid #ddd;">
+        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Total Usage</div>
+        <div id="total-usage-cost" style="font-size: 18px; font-weight: 600; color: #1976d2;">$0.00</div>
+        <div id="total-usage-requests" style="font-size: 12px; color: #666;">0 requests</div>
+      </div>
+    </div>
+    
+    <div id="usage-breakdown" style="background: white; padding: 15px; border-radius: 4px; border: 1px solid #ddd;">
+      <div style="font-size: 14px; font-weight: 500; margin-bottom: 10px;">Today's Breakdown by Model</div>
+      <div id="model-breakdown-list"></div>
+    </div>
+  </div>
+  
+  <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 6px;">
+    <h2 style="font-size: 18px; margin: 0 0 15px 0; color: #1976d2;">Customized Sites</h2>
+    
+    <div id="customized-sites-list" style="background: white; border-radius: 4px; border: 1px solid #ddd; max-height: 300px; overflow-y: auto;">
+      <div style="padding: 20px; text-align: center; color: #666; font-size: 14px;">Loading...</div>
+    </div>
+  </div>
+  
+  <div style="margin-top: 40px; padding: 20px; background: #fff3e0; border: 1px solid #ffcc02; border-radius: 6px;">
+    <h3 style="margin: 0 0 10px 0; color: #e65100; font-size: 16px;">Danger Zone</h3>
+    <p style="margin: 0 0 15px 0; font-size: 14px; color: #666;">
+      This will permanently remove all CSS customizations from all websites and domains. This action cannot be undone.
+    </p>
+    
+    <div id="storage-stats" style="margin: 15px 0; padding: 12px; background: rgba(255,255,255,0.7); border-radius: 4px; font-size: 13px;">
+      <div style="font-weight: 500; margin-bottom: 6px; color: #e65100;">Currently Stored:</div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+        <div>• <span id="css-count">Loading...</span> CSS customizations</div>
+        <div>• <span id="history-count">Loading...</span> prompt histories</div>
+        <div>• <span id="domain-count">Loading...</span> websites/domains</div>
+        <div>• <span id="total-size">Loading...</span> total storage</div>
+      </div>
+    </div>
+    
+    <button id="clear-all-btn" style="background: #dc3545; border: 1px solid #c82333;">Clear All CSS Data</button>
+  </div>
   
   <script type="module" src="dist/settings.js"></script>
 </body>

@@ -2,15 +2,29 @@ let injectedStyleElement: HTMLStyleElement | null = null;
 let accumulatedCSS: string[] = [];
 
 // Get URL key for storage (normalize URL by removing hash and query params for consistency)
-function getUrlKey(): string {
+async function getUrlKey(): Promise<string> {
   const url = new URL(window.location.href);
-  return `pagebuddy_css_${url.origin}${url.pathname}`;
+  
+  // Check if domain-wide mode is enabled
+  try {
+    const result = await chrome.storage.local.get(['pagebuddy_domain_wide']);
+    const isDomainWide = result.pagebuddy_domain_wide || false;
+    
+    if (isDomainWide) {
+      return `pagebuddy_css_${url.origin}`;
+    } else {
+      return `pagebuddy_css_${url.origin}${url.pathname}`;
+    }
+  } catch (error) {
+    console.warn('Failed to check domain-wide setting, defaulting to page-specific:', error);
+    return `pagebuddy_css_${url.origin}${url.pathname}`;
+  }
 }
 
 // Save CSS to storage for this URL
 async function saveCSSToStorage() {
   try {
-    const urlKey = getUrlKey();
+    const urlKey = await getUrlKey();
     if (accumulatedCSS.length > 0) {
       await chrome.storage.local.set({ [urlKey]: accumulatedCSS });
     } else {
@@ -24,25 +38,72 @@ async function saveCSSToStorage() {
 // Load and apply CSS from storage for this URL
 async function loadCSSFromStorage() {
   try {
-    const urlKey = getUrlKey();
+    const urlKey = await getUrlKey();
     const result = await chrome.storage.local.get([urlKey]);
     const storedCSS = result[urlKey];
     
     if (storedCSS && Array.isArray(storedCSS) && storedCSS.length > 0) {
       accumulatedCSS = storedCSS;
       
-      // Create and inject style element
+      // Create style element
       injectedStyleElement = document.createElement('style');
       injectedStyleElement.setAttribute('data-pagebuddy', 'true');
       injectedStyleElement.textContent = accumulatedCSS.join('\n\n/* --- */\n\n');
-      document.head.appendChild(injectedStyleElement);
+      
+      // Inject as early as possible to prevent flickering
+      injectStyleElement();
     }
   } catch (error) {
     console.warn('Failed to load CSS from storage:', error);
   }
 }
 
-// Load CSS when page loads
+// Inject style element as early as possible
+function injectStyleElement() {
+  if (!injectedStyleElement) return;
+  
+  // If head exists, inject there
+  if (document.head) {
+    document.head.appendChild(injectedStyleElement);
+    return;
+  }
+  
+  // If document.documentElement doesn't exist yet, wait for it
+  if (!document.documentElement) {
+    document.addEventListener('DOMContentLoaded', () => {
+      injectStyleElement();
+    });
+    return;
+  }
+  
+  // If head doesn't exist yet, wait for it
+  const observer = new MutationObserver((mutations, obs) => {
+    if (document.head) {
+      document.head.appendChild(injectedStyleElement);
+      obs.disconnect();
+    }
+  });
+  
+  // Start observing
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+  
+  // Fallback: inject into html element if head takes too long
+  setTimeout(() => {
+    if (injectedStyleElement && !injectedStyleElement.parentNode) {
+      if (document.head) {
+        document.head.appendChild(injectedStyleElement);
+      } else if (document.documentElement) {
+        document.documentElement.insertBefore(injectedStyleElement, document.documentElement.firstChild);
+      }
+      observer.disconnect();
+    }
+  }, 100);
+}
+
+// Load CSS immediately when script runs (document_start)
 loadCSSFromStorage();
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -72,8 +133,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         injectedStyleElement.setAttribute('data-pagebuddy', 'true');
         injectedStyleElement.textContent = accumulatedCSS.join('\n\n/* --- */\n\n');
         
-        // Inject into head
-        document.head.appendChild(injectedStyleElement);
+        // Inject into head using our helper function
+        injectStyleElement();
         
         // Debug logging
         console.log('PageBuddy: Injected CSS:', injectedStyleElement.textContent);
@@ -123,7 +184,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     (async () => {
       try {
         // Reload CSS from storage and reapply
-        const urlKey = getUrlKey();
+        const urlKey = await getUrlKey();
         const result = await chrome.storage.local.get([urlKey]);
         const storedCSS = result[urlKey];
         
@@ -140,7 +201,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           injectedStyleElement = document.createElement('style');
           injectedStyleElement.setAttribute('data-pagebuddy', 'true');
           injectedStyleElement.textContent = accumulatedCSS.join('\n\n/* --- */\n\n');
-          document.head.appendChild(injectedStyleElement);
+          injectStyleElement();
         } else {
           accumulatedCSS = [];
         }

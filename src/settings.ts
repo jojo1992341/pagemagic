@@ -701,7 +701,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await chrome.storage.local.remove(keysToRemove);
       }
 
-      showStatus('Factory reset complete. Please reload the extension.', 'success');
+      showStatus('Factory reset complete.', 'success');
       
       // Refresh all displays
       await loadModels();

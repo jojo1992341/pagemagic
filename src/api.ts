@@ -1,354 +1,247 @@
-import Anthropic from '@anthropic-ai/sdk';
+// pagemagic-main/src/api.ts
+
+// Supprimer: import Anthropic from '@anthropic-ai/sdk';
 
 interface CSSGenerationRequest {
-  fileId: string;
+  htmlContent: string; // Modifié: plus de fileId, on envoie le HTML directement
   prompt: string;
 }
 
 interface CSSGenerationResponse {
   css: string;
   usage?: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens: number | null;
-    cache_read_input_tokens: number | null;
-    cost: number;
+    prompt_tokens: number;     // Modifié
+    completion_tokens: number; // Modifié
+    total_tokens: number;      // Modifié
+    cost: number;              // Calculé par nous si nécessaire, OpenRouter le donne souvent
   };
 }
 
-interface FileUploadResponse {
-  fileId: string;
-}
+// FileUploadResponse n'est plus nécessaire
+// interface FileUploadResponse {
+//   fileId: string;
+// }
 
 interface Model {
-  id: string;
-  display_name: string;
-  type: string;
+  id: string;           // L'ID du modèle OpenRouter (ex: "anthropic/claude-3-haiku")
+  display_name: string; // Le nom lisible (ex: "Anthropic: Claude 3 Haiku")
+  // type: string; // Moins pertinent pour OpenRouter de cette manière
 }
 
-interface ModelsResponse {
-  data: Model[];
-}
+// ModelsResponse est ce que OpenRouter renvoie directement
+// interface ModelsResponse {
+//   data: Model[];
+// }
 
-// Model pricing per million tokens
-const MODEL_PRICING: Record<string, { 
-  input: number;  // $/M tokens
-  output: number; // $/M tokens
-  cache_5m: number; // $/M tokens
-  cache_1h: number; // $/M tokens
-  cache_hits: number; // $/M tokens
-}> = {
-  'claude-opus-4-20241022': { 
-    input: 15, 
-    output: 75, 
-    cache_5m: 18.75, 
-    cache_1h: 30, 
-    cache_hits: 1.50 
-  },
-  'claude-sonnet-4-20250514': { 
-    input: 3, 
-    output: 15, 
-    cache_5m: 3.75, 
-    cache_1h: 6, 
-    cache_hits: 0.30 
-  },
-  'claude-3-7-sonnet-20250219': { 
-    input: 3, 
-    output: 15, 
-    cache_5m: 3.75, 
-    cache_1h: 6, 
-    cache_hits: 0.30 
-  },
-  'claude-3-5-sonnet-20241022': { 
-    input: 3, 
-    output: 15, 
-    cache_5m: 3.75, 
-    cache_1h: 6, 
-    cache_hits: 0.30 
-  },
-  'claude-3-5-haiku-20241022': { 
-    input: 0.80, 
-    output: 4, 
-    cache_5m: 1, 
-    cache_1h: 1.6, 
-    cache_hits: 0.08 
-  },
-  'claude-3-opus-20240229': { 
-    input: 15, 
-    output: 75, 
-    cache_5m: 18.75, 
-    cache_1h: 30, 
-    cache_hits: 1.50 
-  },
-  'claude-3-haiku-20240307': { 
-    input: 0.25, 
-    output: 1.25, 
-    cache_5m: 0.30, 
-    cache_1h: 0.50, 
-    cache_hits: 0.03 
-  },
-  // Default fallback pricing (use Sonnet 3.7 rates)
-  'default': { 
-    input: 3, 
-    output: 15, 
-    cache_5m: 3.75, 
-    cache_1h: 6, 
-    cache_hits: 0.30 
-  }
-};
+const OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1";
+// Mettez une URL de référence pour votre extension, ou laissez vide si ce n'est pas strict.
+const YOUR_SITE_URL = "chrome-extension://" + chrome.runtime.id;
+const YOUR_APP_NAME = "PageMagic Chrome Extension";
 
-const DEPRECATED_MODELS = [
-  'claude-2.0',
-  'claude-2.1',
-  'claude-3-sonnet-20240229',
-]
 
-function calculateCost(
-  model: string, 
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens: number | null;
-    cache_read_input_tokens: number | null;
-    cache_creation: {
-      ephemeral_5m_input_tokens: number | null;
-      ephemeral_1h_input_tokens: number | null;
-    } | null;
-  }
-): number {
-  const pricing = MODEL_PRICING[model] || MODEL_PRICING.default;
-  
-  const inputCost = (usage.input_tokens / 1_000_000) * pricing.input;
-  const outputCost = (usage.output_tokens / 1_000_000) * pricing.output;
-  
-  let cacheCost = 0;
-  
-  // Cache creation costs
-  if (usage.cache_creation) {
-    if (usage.cache_creation.ephemeral_5m_input_tokens) {
-      cacheCost += (usage.cache_creation.ephemeral_5m_input_tokens / 1_000_000) * pricing.cache_5m;
-    }
-    if (usage.cache_creation.ephemeral_1h_input_tokens) {
-      cacheCost += (usage.cache_creation.ephemeral_1h_input_tokens / 1_000_000) * pricing.cache_1h;
-    }
-  }
-  
-  // Cache read costs (hits)
-  if (usage.cache_read_input_tokens) {
-    cacheCost += (usage.cache_read_input_tokens / 1_000_000) * pricing.cache_hits;
-  }
-  
-  return inputCost + outputCost + cacheCost;
-}
+// MODEL_PRICING et calculateCost ne sont plus nécessaires comme avant,
+// car les modèles gratuits auront un coût de 0.
+// Si vous décidez d'inclure des modèles payants, vous pourrez récupérer
+// les infos de pricing de l'API /models d'OpenRouter.
 
-export class AnthropicService {
-  private client: Anthropic | null = null;
+export class OpenRouterService {
   private apiKey: string | null = null;
 
   async initialize(): Promise<boolean> {
     try {
-      const result = await chrome.storage.sync.get(['anthropicApiKey']);
-      const apiKey = result.anthropicApiKey;
+      // Modifié: anthropicApiKey -> openRouterApiKey
+      const result = await chrome.storage.sync.get(['openRouterApiKey']);
+      const apiKey = result.openRouterApiKey;
       
       if (!apiKey) {
-        throw new Error('API key not found');
+        console.warn('OpenRouter API key not found in storage.');
+        this.apiKey = null;
+        return false; // Indiquer que l'initialisation a échoué ou est partielle
       }
 
       this.apiKey = apiKey;
-      this.client = new Anthropic({
-        apiKey: apiKey,
-        dangerouslyAllowBrowser: true,
-      });
-      
       return true;
     } catch (error) {
-      console.error('Failed to initialize Anthropic client:', error);
+      console.error('Failed to initialize OpenRouter service:', error);
+      this.apiKey = null;
       return false;
     }
   }
 
-  async uploadHTML(html: string): Promise<FileUploadResponse> {
-    if (!this.client) {
-      throw new Error('Anthropic client not initialized');
-    }
-
-    // Create a plaintext file from the HTML string (Files API only supports PDF and plaintext)
-    const blob = new Blob([html], { type: 'text/plain' });
-    const file = new File([blob], 'page.txt', { type: 'text/plain' });
-
-    const uploadResponse = await this.client.beta.files.upload({
-      file: file,
-      betas: ['files-api-2025-04-14']
-    });
-
-    return {
-      fileId: uploadResponse.id
-    };
-  }
+  // uploadHTML n'est plus nécessaire, le HTML sera inclus dans le prompt
+  // async uploadHTML(html: string): Promise<FileUploadResponse> { ... }
 
   async generateCSS(request: CSSGenerationRequest): Promise<CSSGenerationResponse> {
-    if (!this.client) {
-      throw new Error('Anthropic client not initialized');
+    if (!this.apiKey) {
+      // Essayer de réinitialiser si la clé n'est pas là (par exemple, si elle a été définie après le premier chargement)
+      const initialized = await this.initialize();
+      if(!initialized || !this.apiKey) {
+          throw new Error('OpenRouter API key not configured. Please check settings.');
+      }
     }
 
-    const systemPromptText = `You are a CSS expert. Given an HTML page and a user request, generate CSS rules that will apply the requested changes to the page. 
+    const systemPromptText = `You are an expert CSS generator. Given the HTML content of a web page and a user's request, you must generate ONLY the CSS code that implements the requested changes.
 
-CRITICAL: Respond with CSS rules ONLY. Do not include any explanations, descriptions, or text outside of CSS rules.
+    CRITICAL INSTRUCTIONS:
+    1.  Respond with VALID CSS rules ONLY.
+    2.  Do NOT include any explanations, descriptions, or any text outside of the CSS rules.
+    3.  Do NOT wrap your response in \`\`\`css, \`\`\`, or any other markdown formatting or code fences.
+    4.  Use highly specific selectors to ensure styles override existing page styles (e.g., \`html body .some-class > .another-class\`).
+    5.  ALWAYS use \`!important\` on every CSS declaration to maximize the chance of overriding existing styles.
+    6.  Consider the provided HTML structure carefully when choosing selectors.
+    7.  Keep changes minimal and strictly focused on fulfilling the user's prompt.
+    8.  For elements like \`code\` or \`pre\`, use selectors like "html body code, html body pre" for higher specificity.
+    9.  When changing \`background-color\`, ALWAYS include \`background-image: none !important;\` to remove any existing background images that might interfere.
+    10. When asked to change the main content width or text width, typically target the \`body\` element or a primary wrapper div, overriding its \`width\` and/or \`max-width\`.
 
-Guidelines:
-- Return ONLY CSS rules - no explanations, no descriptions, no markdown formatting, no code fences
-- DO NOT include any text before or after the CSS rules
-- DO NOT explain what the CSS does
-- DO NOT wrap your response in \`\`\`css or any other markdown formatting
-- Use highly specific selectors to override existing styles (e.g., html body element, or multiple class selectors)
-- ALWAYS use !important to ensure styles override existing CSS
-- Consider the page structure when choosing selectors
-- Use maximum specificity to ensure your styles take precedence
-- Keep changes minimal and focused on the request
-- For elements like code, pre, use selectors like "html body code, html body pre" for higher specificity
-- When changing background-color, ALWAYS include background-image: none !important to remove any existing background images
-- When changing the main content/text width, always override the width/max-width of the body element
+    The user will provide the HTML content and their specific request. Your entire output must be CSS code and nothing else.`;
 
-Your response must contain ONLY valid CSS rules and nothing else.`;
-
-    if (!request.fileId) {
-      throw new Error('File ID is required - HTML must be uploaded first');
-    }
-
-    const message = request.prompt;
-
-    // Get the selected model from storage, default to haiku
+    // Get the selected model from storage
     const modelResult = await chrome.storage.sync.get(['selectedModel']);
     const selectedModel = modelResult.selectedModel;
-
-    const response = await this.client.beta.messages.create({
-      model: selectedModel,
-      max_tokens: 1024,
-      system: systemPromptText,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'document',
-              source: {
-                type: 'file',
-                file_id: request.fileId
-              },
-              cache_control: {
-                type: 'ephemeral'
-              }
-            },
-            {
-              type: 'text',
-              text: message
-            }
-          ]
-        }
-      ],
-      betas: ['files-api-2025-04-14']
-    });
-
-    const cssContent = response.content[0];
-    if (cssContent.type !== 'text') {
-      throw new Error('Unexpected response type');
+    if (!selectedModel) {
+        throw new Error('No model selected. Please select a model in settings.');
     }
 
-    // Clean up the CSS response - remove explanations and extract only CSS rules
-    let cleanCSS = cssContent.text.trim();
+    const userMessageContent = `Here is the HTML of the page:\n\n\`\`\`html\n${request.htmlContent}\n\`\`\`\n\nMy request is: ${request.prompt}`;
+
+    const response = await fetch(`${OPENROUTER_API_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': YOUR_SITE_URL, // Optionnel mais recommandé
+        'X-Title': YOUR_APP_NAME,      // Optionnel mais recommandé
+      },
+      body: JSON.stringify({
+        model: selectedModel,
+        messages: [
+          { role: 'system', content: systemPromptText },
+          { role: 'user', content: userMessageContent }
+        ],
+        max_tokens: 2048, // Augmenté un peu, car le HTML est dans le prompt
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error("OpenRouter API Error:", response.status, errorData);
+      const detail = errorData.error?.message || response.statusText || "Unknown API error";
+      if (response.status === 401) {
+        throw new Error(`Authentication failed (401). Check your OpenRouter API key. Details: ${detail}`);
+      }
+      if (response.status === 429) {
+        throw new Error(`Rate limit exceeded (429) for model ${selectedModel}. Details: ${detail}`);
+      }
+      throw new Error(`API request failed with status ${response.status}: ${detail}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.choices || data.choices.length === 0 || !data.choices[0].message || !data.choices[0].message.content) {
+      throw new Error('Invalid response structure from OpenRouter API');
+    }
+
+    let cleanCSS = data.choices[0].message.content.trim();
     
-    // Remove code fences if they exist
+    // Nettoyage du CSS (similaire à avant)
     cleanCSS = cleanCSS.replace(/^```css\s*/gm, '');
     cleanCSS = cleanCSS.replace(/^```\s*/gm, '');
     cleanCSS = cleanCSS.replace(/```$/gm, '');
     
-    // Extract CSS rules by finding the first CSS selector and the last closing brace
     const lines = cleanCSS.split('\n');
     let startIndex = -1;
     let endIndex = -1;
     
-    // Find the first line that looks like a CSS selector or rule
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
-      // Look for CSS selectors or at-rules
       if (line.includes('{') || line.match(/^[a-zA-Z0-9\s\-_#.,>+~\[\]:()@]+\s*{?/) && (line.includes(':') || line.includes('{'))) {
         startIndex = i;
         break;
       }
     }
-    
-    // Find the last closing brace
     for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i].trim();
-      if (line.includes('}')) {
+      if (lines[i].trim().includes('}')) {
         endIndex = i;
         break;
       }
     }
-    
-    // Extract only the CSS portion
     if (startIndex !== -1 && endIndex !== -1 && startIndex <= endIndex) {
-      const cssLines = lines.slice(startIndex, endIndex + 1);
-      cleanCSS = cssLines.join('\n').trim();
+      cleanCSS = lines.slice(startIndex, endIndex + 1).join('\n').trim();
     }
     
-    // Calculate cost
-    const cost = calculateCost(selectedModel, response.usage);
+    const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     
-    // Track usage for this request
-    await this.trackUsage(selectedModel, response.usage, cost);
+    // Pour les modèles gratuits, le coût est 0.
+    // Si vous ajoutez des modèles payants, vous devrez chercher le prix du modèle
+    // dans les données de /models et le multiplier par usage.total_tokens / 1_000_000 (ou par 1k tokens)
+    const cost = data.usage?.total_tokens && data.choices[0].model_info?.pricing?.completion // Exemple très simplifié
+                 ? (parseFloat(data.choices[0].model_info.pricing.completion) / 1000 * data.usage.completion_tokens) +
+                   (parseFloat(data.choices[0].model_info.pricing.prompt) / 1000 * data.usage.prompt_tokens)
+                 : 0;
+
+
+    await this.trackUsage(selectedModel, usage, cost);
     
     return {
       css: cleanCSS.trim(),
       usage: {
-        input_tokens: response.usage.input_tokens,
-        output_tokens: response.usage.output_tokens,
-        cache_creation_input_tokens: response.usage.cache_creation_input_tokens,
-        cache_read_input_tokens: response.usage.cache_read_input_tokens,
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        total_tokens: usage.total_tokens,
         cost: cost
       }
     };
   }
 
   async getAvailableModels(): Promise<Model[]> {
-    if (!this.client) {
-      throw new Error('Anthropic client not initialized');
+    if (!this.apiKey) {
+      // Essayer de réinitialiser si la clé n'est pas là
+      const initialized = await this.initialize();
+      if(!initialized || !this.apiKey) {
+          console.warn('Cannot fetch models without API key.');
+          return []; // Retourner un tableau vide si la clé n'est pas disponible
+      }
     }
 
     try {
-      const response = await this.client.models.list({ limit: 1000 });
-
-      // Filter for models that can be used for messages (type 'model')
-      return response.data
-        .filter(model => model.type === 'model')
-        .filter(model => !DEPRECATED_MODELS.includes(model.id))
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        .map(model => ({
-          id: model.id,
-          display_name: model.display_name,
-          type: 'message' // Convert to our expected type
-        }));
-    } catch (error) {
-      console.error('Failed to fetch models:', error);
-      throw error;
-    }
-  }
-
-  async deleteFile(fileId: string): Promise<void> {
-    if (!this.client) {
-      throw new Error('Anthropic client not initialized');
-    }
-
-    try {
-      await this.client.beta.files.delete(fileId, {
-        betas: ['files-api-2025-04-14']
+      const response = await fetch(`${OPENROUTER_API_BASE_URL}/models`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
       });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("OpenRouter /models API Error:", response.status, errorData);
+        throw new Error(`Failed to fetch models (${response.status}): ${errorData.error?.message || response.statusText}`);
+      }
+
+      const modelsResponse = await response.json();
+      
+      if (!modelsResponse.data || !Array.isArray(modelsResponse.data)) {
+        throw new Error('Invalid response structure from OpenRouter /models API');
+      }
+      
+      return modelsResponse.data
+        .filter((model: any) => model.name && model.name.toLowerCase().includes('(free)')) // Filtrer par nom contenant "(free)"
+        .map((model: any) => ({
+          id: model.id, // ex: "anthropic/claude-3-haiku"
+          display_name: model.name, // ex: "Anthropic: Claude 3 Haiku (free)"
+        }))
+        .sort((a: Model, b: Model) => a.display_name.localeCompare(b.display_name)); // Trier par nom
     } catch (error) {
-      console.warn('Failed to delete file:', error);
+      console.error('Failed to fetch models from OpenRouter:', error);
+      throw error; // Propager l'erreur pour que l'appelant puisse la gérer
     }
   }
+
+  // deleteFile n'est plus nécessaire
+  // async deleteFile(fileId: string): Promise<void> { ... }
 
   async trackUsage(model: string, usage: any, cost: number): Promise<void> {
+    // Cette fonction peut rester similaire, mais les tokens sont nommés différemment
     try {
       const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
       const storageKey = `pagemagic_usage_${today}`;
@@ -357,30 +250,27 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
       const dailyUsage = result[storageKey] || { requests: 0, totalCost: 0, models: {} };
       const totalUsage = result.pagemagic_total_usage || { totalCost: 0, totalRequests: 0, models: {} };
       
-      // Update daily usage
       dailyUsage.requests += 1;
       dailyUsage.totalCost += cost;
       
       if (!dailyUsage.models[model]) {
-        dailyUsage.models[model] = { requests: 0, cost: 0, tokens: { input: 0, output: 0 } };
+        dailyUsage.models[model] = { requests: 0, cost: 0, tokens: { prompt: 0, completion: 0 } };
       }
       dailyUsage.models[model].requests += 1;
       dailyUsage.models[model].cost += cost;
-      dailyUsage.models[model].tokens.input += usage.input_tokens;
-      dailyUsage.models[model].tokens.output += usage.output_tokens;
+      dailyUsage.models[model].tokens.prompt += usage.prompt_tokens || 0;
+      dailyUsage.models[model].tokens.completion += usage.completion_tokens || 0;
       
-      // Update total usage
       totalUsage.totalCost += cost;
       totalUsage.totalRequests += 1;
       
-      // Update total usage by model
       if (!totalUsage.models[model]) {
-        totalUsage.models[model] = { requests: 0, cost: 0, tokens: { input: 0, output: 0 } };
+        totalUsage.models[model] = { requests: 0, cost: 0, tokens: { prompt: 0, completion: 0 } };
       }
       totalUsage.models[model].requests += 1;
       totalUsage.models[model].cost += cost;
-      totalUsage.models[model].tokens.input += usage.input_tokens;
-      totalUsage.models[model].tokens.output += usage.output_tokens;
+      totalUsage.models[model].tokens.prompt += usage.prompt_tokens || 0;
+      totalUsage.models[model].tokens.completion += usage.completion_tokens || 0;
       
       await chrome.storage.local.set({
         [storageKey]: dailyUsage,
@@ -391,6 +281,7 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
     }
   }
 
+  // getTotalUsage et getDailyUsage peuvent rester les mêmes structurellement.
   async getTotalUsage(): Promise<{ totalCost: number; totalRequests: number; models: any }> {
     try {
       const result = await chrome.storage.local.get(['pagemagic_total_usage']);
@@ -414,4 +305,5 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
   }
 }
 
-export const anthropicService = new AnthropicService();
+// Modifié: anthropicService -> openRouterService
+export const openRouterService = new OpenRouterService();

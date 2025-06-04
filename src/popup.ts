@@ -1,4 +1,5 @@
-import { anthropicService } from './api.js';
+// pagemagic-main/src/popup.ts
+import { openRouterService } from './api.js';
 
 interface PromptHistoryItem {
   id: string;
@@ -9,151 +10,153 @@ interface PromptHistoryItem {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  // Check for API key first
-  const result = await chrome.storage.sync.get(['anthropicApiKey']);
-  if (!result.anthropicApiKey) {
-    // Show "no API key" message instead of regular UI
+  const result = await chrome.storage.sync.get(['openRouterApiKey']);
+  if (!result.openRouterApiKey) {
     document.body.innerHTML = `
       <div style="padding: 20px; text-align: center;">
         <h3 style="margin: 0 0 10px 0; color: #333;">No API key set</h3>
-        <p style="margin: 0 0 15px 0; color: #666; font-size: 14px;">Go to settings to set your Anthropic API key.</p>
+        <p style="margin: 0 0 15px 0; color: #666; font-size: 14px;">Go to settings to set your OpenRouter API key.</p>
         <button id="open-settings" style="
-          background: #007bff; 
-          color: white; 
-          border: none; 
-          padding: 8px 16px; 
-          border-radius: 4px; 
-          cursor: pointer; 
-          font-size: 14px;
+          background: #1976d2; /* Couleur du thème */
+          color: white; border: none; padding: 8px 16px; 
+          border-radius: 4px; cursor: pointer; font-size: 14px;
         ">Open Settings</button>
       </div>
     `;
-    
-    // Add settings button handler
     const openSettingsBtn = document.getElementById('open-settings');
     openSettingsBtn?.addEventListener('click', () => {
       chrome.runtime.openOptionsPage();
     });
-    
-    return; // Exit early, don't load the rest of the UI
+    return;
   }
 
   const promptInput = document.getElementById('prompt-input') as HTMLTextAreaElement;
   const applyButton = document.getElementById('apply-changes') as HTMLButtonElement;
-  const status = document.getElementById('status') as HTMLDivElement;
+  const statusDiv = document.getElementById('status') as HTMLDivElement;
   const historySection = document.getElementById('history-section') as HTMLDivElement;
   const historyList = document.getElementById('history-list') as HTMLDivElement;
-  const dailyCost = document.getElementById('daily-cost') as HTMLSpanElement;
-  const totalCost = document.getElementById('total-cost') as HTMLSpanElement;
   const settingsLink = document.getElementById('settings-link') as HTMLAnchorElement;
   const domainWideCheckbox = document.getElementById('domain-wide') as HTMLInputElement;
   const disableAllButton = document.getElementById('disable-all') as HTMLButtonElement;
   const removeAllButton = document.getElementById('remove-all') as HTMLButtonElement;
   
-  let currentFileId: string | null = null;
   let currentTabId: number | null = null;
-  
-  // Get current URL key for storage
+  let pageHTMLCache: string | null = null;
+  let currentTabUrl: string | null = null; // Pour détecter si l'URL a changé au sein du même onglet
+
   async function getCurrentUrlKey(useDomainWide?: boolean): Promise<string> {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const url = new URL(tab.url!);
+    if (!tab?.url) throw new Error("Cannot get URL of current tab for storage key.");
+    const url = new URL(tab.url);
     const isDomainWide = useDomainWide ?? domainWideCheckbox.checked;
+    const basePath = `pagemagic_history_${url.origin}`;
     
     if (isDomainWide) {
-      return `pagemagic_history_${url.origin}`;
+      return basePath;
     } else {
-      return `pagemagic_history_${url.origin}${url.pathname}`;
+      // Normaliser le pathname en supprimant le slash de fin s'il existe et n'est pas la racine
+      let path = url.pathname;
+      if (path !== '/' && path.endsWith('/')) {
+        path = path.slice(0, -1);
+      }
+      return `${basePath}${path}`;
     }
   }
   
-  // Get prompt history for current URL
   async function getPromptHistory(): Promise<PromptHistoryItem[]> {
     try {
       const urlKey = await getCurrentUrlKey();
-      const result = await chrome.storage.local.get([urlKey]);
-      return result[urlKey] || [];
+      const storageResult = await chrome.storage.local.get([urlKey]);
+      return storageResult[urlKey] || [];
     } catch (error) {
       console.warn('Failed to get prompt history:', error);
+      showStatus('Error loading history.', 'error');
       return [];
     }
   }
   
-  // Save prompt history for current URL
   async function savePromptHistory(history: PromptHistoryItem[]): Promise<void> {
     try {
       const urlKey = await getCurrentUrlKey();
       await chrome.storage.local.set({ [urlKey]: history });
     } catch (error) {
       console.warn('Failed to save prompt history:', error);
+      showStatus('Error saving history.', 'error');
     }
   }
   
-  // Add new prompt to history
   async function addToHistory(prompt: string, css: string): Promise<void> {
     const history = await getPromptHistory();
     const newItem: PromptHistoryItem = {
-      id: Date.now().toString(),
+      id: Date.now().toString() + Math.random().toString(36).substring(2,7), // Plus d'unicité
       prompt,
       css,
       timestamp: Date.now()
     };
     history.push(newItem);
     await savePromptHistory(history);
-    
-    // Update the CSS storage to reflect the new history
+    await updateCSSStorage(history); // Ceci applique le CSS combiné
+    await displayHistory();
+  }
+  
+  async function removeFromHistory(id: string): Promise<void> {
+    let history = await getPromptHistory();
+    history = history.filter(item => item.id !== id);
+    await savePromptHistory(history);
     await updateCSSStorage(history);
     await displayHistory();
+    await reloadCSSOnPage(); // S'assurer que le CSS est réappliqué sur la page
   }
   
-  // Remove prompt from history and update storage
-  async function removeFromHistory(id: string): Promise<void> {
-    const history = await getPromptHistory();
-    const updatedHistory = history.filter(item => item.id !== id);
-    await savePromptHistory(updatedHistory);
-    
-    // Update the CSS storage to reflect the removal
-    await updateCSSStorage(updatedHistory);
-    await displayHistory();
-  }
-  
-  // Toggle disabled state of a history item
   async function toggleDisabled(id: string): Promise<void> {
-    const history = await getPromptHistory();
-    const updatedHistory = history.map(item => 
+    let history = await getPromptHistory();
+    history = history.map(item => 
       item.id === id ? { ...item, disabled: !item.disabled } : item
     );
-    await savePromptHistory(updatedHistory);
-    
-    // Update the CSS storage to reflect the change
-    await updateCSSStorage(updatedHistory);
-    
+    await savePromptHistory(history);
+    await updateCSSStorage(history);
     await displayHistory();
+    await reloadCSSOnPage();
   }
   
-  // Update CSS storage with current history
   async function updateCSSStorage(history: PromptHistoryItem[], useDomainWide?: boolean): Promise<void> {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const url = new URL(tab.url!);
+      if (!tab?.url) throw new Error("Cannot get URL of current tab for CSS storage.");
+      const url = new URL(tab.url);
       const isDomainWide = useDomainWide ?? domainWideCheckbox.checked;
       
-      const urlKey = isDomainWide 
+      const cssUrlKey = (isDomainWide 
         ? `pagemagic_css_${url.origin}`
-        : `pagemagic_css_${url.origin}${url.pathname}`;
+        : `pagemagic_css_${url.origin}${url.pathname.endsWith('/') && url.pathname !=='/' ? url.pathname.slice(0,-1) : url.pathname}`
+      );
       
-      const enabledHistory = history.filter(item => !item.disabled);
-      if (enabledHistory.length > 0) {
-        const cssArray = enabledHistory.map(item => item.css);
-        await chrome.storage.local.set({ [urlKey]: cssArray });
+      const enabledHistoryCSS = history.filter(item => !item.disabled).map(item => item.css);
+      
+      if (enabledHistoryCSS.length > 0) {
+        await chrome.storage.local.set({ [cssUrlKey]: enabledHistoryCSS });
       } else {
-        await chrome.storage.local.remove(urlKey);
+        await chrome.storage.local.remove(cssUrlKey); // Supprime la clé si plus de CSS actif
       }
     } catch (error) {
       console.warn('Failed to update CSS storage:', error);
+      showStatus('Error updating CSS storage.', 'error');
+    }
+  }
+
+  async function reloadCSSOnPage() {
+    if (currentTabId) {
+        try {
+            const response = await chrome.tabs.sendMessage(currentTabId, { action: 'reloadCSS' });
+            if (!response?.success) {
+                console.warn('Failed to reload CSS on page or content script not ready:', response?.error);
+            }
+        } catch (e) {
+            console.warn('Error sending reloadCSS message, content script might not be injected yet.', e);
+        }
     }
   }
   
-  // Display prompt history in the UI
   async function displayHistory(): Promise<void> {
     const history = await getPromptHistory();
     
@@ -163,216 +166,134 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     
     historySection.style.display = 'block';
-    historyList.innerHTML = '';
+    historyList.innerHTML = ''; // Clear previous items
     
-    // Update button text based on current state of all items
-    const allDisabled = history.every(item => item.disabled);
-    disableAllButton.textContent = allDisabled ? 'Enable All' : 'Disable All';
+    const allItemsDisabled = history.every(item => item.disabled);
+    disableAllButton.textContent = allItemsDisabled ? 'Enable All' : 'Disable All';
     
-    history.forEach(item => {
-      const historyItem = document.createElement('div');
-      historyItem.className = 'history-item';
+    history.slice().reverse().forEach(item => { // Afficher les plus récents en premier
+      const historyItemDiv = document.createElement('div');
+      historyItemDiv.className = 'history-item';
+      if (item.disabled) historyItemDiv.classList.add('disabled');
       
       const promptDiv = document.createElement('div');
       promptDiv.className = 'history-prompt';
       promptDiv.textContent = item.prompt;
       
-      const buttonContainer = document.createElement('div');
-      buttonContainer.className = 'history-buttons';
+      const buttonsDiv = document.createElement('div');
+      buttonsDiv.className = 'history-buttons';
       
-      const editButton = document.createElement('button');
-      editButton.className = 'history-edit';
-      editButton.textContent = 'Edit';
-      editButton.addEventListener('click', async () => {
-        try {
-          // Remove from history
-          await removeFromHistory(item.id);
-          
-          // Put prompt back in text area
-          promptInput.value = item.prompt;
-          
-          // Focus the text area for immediate editing
-          promptInput.focus();
-          
-          // Reapply remaining CSS changes
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          const response = await chrome.tabs.sendMessage(tab.id!, { action: 'reloadCSS' });
-          
-          if (response?.success) {
-            // Update undo button visibility
-            const updatedHistory = await getPromptHistory();
-            if (updatedHistory.length === 0) {
-              removeAllButton.style.display = 'none';
-            }
-          } else {
-            throw new Error(response?.error || 'Failed to reload CSS');
-          }
-        } catch (error) {
-          showStatus(formatErrorMessage(error) || 'Failed to edit change', 'error');
-        }
+      const editBtn = document.createElement('button');
+      editBtn.className = 'history-edit';
+      editBtn.textContent = 'Edit';
+      editBtn.title = "Edit this change (removes current, refills prompt)";
+      editBtn.addEventListener('click', async () => {
+        promptInput.value = item.prompt;
+        await removeFromHistory(item.id); // Ceci va aussi appeler displayHistory et reloadCSS
+        promptInput.focus();
       });
       
-      const disableButton = document.createElement('button');
-      disableButton.className = 'history-disable';
-      disableButton.textContent = item.disabled ? 'Enable' : 'Disable';
-      disableButton.addEventListener('click', async () => {
-        try {
-          await toggleDisabled(item.id);
-          
-          // Reapply CSS changes to reflect the toggle
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          const response = await chrome.tabs.sendMessage(tab.id!, { action: 'reloadCSS' });
-          
-          if (!response?.success) {
-            throw new Error(response?.error || 'Failed to reload CSS');
-          }
-        } catch (error) {
-          showStatus(formatErrorMessage(error) || 'Failed to toggle change', 'error');
-        }
-      });
+      const disableBtn = document.createElement('button');
+      disableBtn.className = 'history-disable';
+      disableBtn.textContent = item.disabled ? 'Enable' : 'Disable';
+      disableBtn.title = item.disabled ? "Enable this change" : "Disable this change";
+      disableBtn.addEventListener('click', () => toggleDisabled(item.id));
       
-      const deleteButton = document.createElement('button');
-      deleteButton.className = 'history-delete';
-      deleteButton.textContent = 'Remove';
-      deleteButton.addEventListener('click', async () => {
-        try {
-          await removeFromHistory(item.id);
-          
-          // Reapply remaining CSS changes
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          const response = await chrome.tabs.sendMessage(tab.id!, { action: 'reloadCSS' });
-          
-          if (response?.success) {
-            // Update history display
-            const updatedHistory = await getPromptHistory();
-            if (updatedHistory.length === 0) {
-              historySection.style.display = 'none';
-            }
-          } else {
-            throw new Error(response?.error || 'Failed to reload CSS');
-          }
-        } catch (error) {
-          showStatus(formatErrorMessage(error) || 'Failed to remove change', 'error');
-        }
-      });
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'history-delete';
+      deleteBtn.textContent = 'Remove';
+      deleteBtn.title = "Permanently remove this change";
+      deleteBtn.addEventListener('click', () => removeFromHistory(item.id));
       
-      buttonContainer.appendChild(editButton);
-      buttonContainer.appendChild(disableButton);
-      buttonContainer.appendChild(deleteButton);
-      
-      // Apply disabled styling to the prompt if disabled
-      if (item.disabled) {
-        historyItem.classList.add('disabled');
-      }
-      
-      historyItem.appendChild(promptDiv);
-      historyItem.appendChild(buttonContainer);
-      historyList.appendChild(historyItem);
+      buttonsDiv.appendChild(editBtn);
+      buttonsDiv.appendChild(disableBtn);
+      buttonsDiv.appendChild(deleteBtn);
+      historyItemDiv.appendChild(promptDiv);
+      historyItemDiv.appendChild(buttonsDiv);
+      historyList.appendChild(historyItemDiv);
     });
   }
   
-  // Load persisted state on popup open
   async function loadState() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const result = await chrome.storage.local.get([`pagemagic_state_${tab.id}`]);
-      const state = result[`pagemagic_state_${tab.id}`];
-      
-      if (state) {
-        currentFileId = state.fileId;
-        currentTabId = tab.id!;
+      if (!tab?.id || !tab?.url) {
+          console.warn("Popup opened on invalid tab.");
+          applyButton.disabled = true; // Désactiver si l'onglet n'est pas valide
+          showStatus("Cannot operate on this tab.", "error");
+          return;
       }
-      
-      // Also check if there are stored customizations for this URL or domain
-      const url = new URL(tab.url!);
-      const pageUrlKey = `pagemagic_css_${url.origin}${url.pathname}`;
-      const domainUrlKey = `pagemagic_css_${url.origin}`;
-      const cssResult = await chrome.storage.local.get([pageUrlKey, domainUrlKey]);
-      const pageCSS = cssResult[pageUrlKey];
-      const domainCSS = cssResult[domainUrlKey];
-      
-      // Load domain-wide checkbox state FIRST (needed for history display)
-      await loadDomainWideState();
-      
-      // Load and display prompt history
+      currentTabId = tab.id;
+      currentTabUrl = tab.url; // Stocker l'URL actuelle
+      pageHTMLCache = null; 
+
+      await loadDomainWideState(); // Doit être chargé avant displayHistory pour la clé correcte
       await displayHistory();
       
-      // Show history section if there are customizations
       const history = await getPromptHistory();
-      if (history.length > 0) {
-        historySection.style.display = 'block';
-      }
+      historySection.style.display = history.length > 0 ? 'block' : 'none';
     } catch (error) {
       console.warn('Failed to load state:', error);
-    }
-  }
-  
-  // Save state to storage
-  async function saveState(hasChanges: boolean) {
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const state = {
-        fileId: currentFileId,
-        hasChanges: hasChanges
-      };
-      await chrome.storage.local.set({ [`pagemagic_state_${tab.id}`]: state });
-    } catch (error) {
-      console.warn('Failed to save state:', error);
+      showStatus("Error loading extension state.", "error");
     }
   }
 
   function formatErrorMessage(error: any): string {
     if (error instanceof Error) {
-      // Check if the error message contains a 429 status or rate limit indication
+      if (error.message.includes('API key not configured')) {
+        return 'API key missing. Go to Settings.';
+      }
+      if (error.message.includes('401') || error.message.toLowerCase().includes('authentication failed')) {
+        return 'Authentication failed. Check API key in Settings.';
+      }
       if (error.message.includes('429') || error.message.toLowerCase().includes('rate limit')) {
-        return 'Rate limit exceeded.';
+        return 'Rate limit exceeded with API. Try again later.';
       }
-      if (error.message.includes('prompt is too long')) {
-        return 'Page content is too long (> 200k tokens).';
+      if (error.message.toLowerCase().includes('context_length_exceeded') || error.message.includes('page content too long')) {
+        return 'Page content too long for this model.';
       }
-      return error.message;
+      return error.message.length > 100 ? error.message.substring(0, 97) + "..." : error.message;
     }
-    return 'Unknown error occurred';
+    return 'An unknown error occurred.';
   }
 
   function showStatus(message: string, type: 'success' | 'error' | 'loading') {
-    status.textContent = message;
-    status.className = `status ${type}`;
-    status.style.display = 'block';
-    
-    // Only auto-hide success messages, keep errors and loading visible
+    statusDiv.textContent = message;
+    statusDiv.className = `status ${type}`; // Assurez-vous que la classe 'status' est toujours là
+    statusDiv.style.display = 'block';
     if (type === 'success') {
       setTimeout(() => {
-        status.style.display = 'none';
+        // Cache le message uniquement s'il n'a pas été remplacé entre-temps
+        if (statusDiv.textContent === message && statusDiv.classList.contains('success')) {
+          statusDiv.style.display = 'none';
+        }
       }, 3000);
     }
   }
 
-  // Disable/enable UI during processing
   function setUIProcessing(processing: boolean) {
     applyButton.disabled = processing;
     promptInput.readOnly = processing;
-    
-    if (processing) {
-      promptInput.style.opacity = '0.6';
-      promptInput.style.cursor = 'not-allowed';
-    } else {
-      promptInput.style.opacity = '1';
-      promptInput.style.cursor = 'text';
-    }
+    disableAllButton.disabled = processing;
+    removeAllButton.disabled = processing;
+    // Désactiver les boutons d'historique individuels aussi
+    historyList.querySelectorAll('button').forEach(btn => (btn as HTMLButtonElement).disabled = processing);
+
+    promptInput.style.opacity = processing ? '0.7' : '1';
+    promptInput.style.cursor = processing ? 'wait' : 'text';
+    if(processing) applyButton.textContent = 'Applying...';
+    else applyButton.textContent = 'Apply Changes';
   }
 
-  // Load domain-wide checkbox state
   async function loadDomainWideState() {
     try {
-      const result = await chrome.storage.local.get(['pagemagic_domain_wide']);
-      domainWideCheckbox.checked = result.pagemagic_domain_wide || false;
+      const storageResult = await chrome.storage.local.get(['pagemagic_domain_wide']);
+      domainWideCheckbox.checked = storageResult.pagemagic_domain_wide || false;
     } catch (error) {
       console.warn('Failed to load domain-wide state:', error);
     }
   }
 
-  // Save domain-wide checkbox state
   async function saveDomainWideState() {
     try {
       await chrome.storage.local.set({ 
@@ -383,303 +304,207 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Cleanup function
-  async function cleanup() {
-    if (currentFileId) {
-      try {
-        await anthropicService.deleteFile(currentFileId);
-      } catch (error) {
-        console.warn('Failed to delete uploaded file:', error);
-      }
-      currentFileId = null;
-    }
-  }
-
-  // Load state when popup opens
   await loadState();
   
-  // Add keyboard shortcut for Cmd+Enter
   promptInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.metaKey) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      applyButton?.click();
+      if (!applyButton.disabled) applyButton.click();
     }
   });
   
-  // Focus the textarea when popup opens
   promptInput?.focus();
 
-  // Settings link handler
   settingsLink?.addEventListener('click', (e) => {
     e.preventDefault();
     chrome.runtime.openOptionsPage();
   });
 
-  // Domain-wide checkbox handler
   domainWideCheckbox?.addEventListener('change', async () => {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const url = new URL(tab.url!);
+    const previousDomainWide = !domainWideCheckbox.checked;
+    const oldKey = await getCurrentUrlKey(previousDomainWide); // Clé pour l'ancien scope
+    const oldHistoryResult = await chrome.storage.local.get([oldKey]);
+    const oldHistory: PromptHistoryItem[] = oldHistoryResult[oldKey] || [];
     
-    // Get the old scope key (opposite of current checkbox state)
-    const oldIsDomainWide = !domainWideCheckbox.checked;
-    const oldHistoryKey = oldIsDomainWide ? 
-      `pagemagic_history_${url.origin}` : 
-      `pagemagic_history_${url.origin}${url.pathname}`;
-    const oldCSSKey = oldIsDomainWide ? 
-      `pagemagic_css_${url.origin}` : 
-      `pagemagic_css_${url.origin}${url.pathname}`;
-    
-    // Get data from old scope
-    const oldHistoryResult = await chrome.storage.local.get([oldHistoryKey]);
-    const oldHistory = oldHistoryResult[oldHistoryKey] || [];
-    
-    // Save the new domain-wide preference
-    await saveDomainWideState();
-    
-    // If there's data in the old scope, migrate it to the new scope
-    if (oldHistory.length > 0) {
-      // Save history to new scope
-      await savePromptHistory(oldHistory);
-      
-      // Update CSS storage for the new scope
-      await updateCSSStorage(oldHistory);
-      
-      // Clean up old scope data
-      await chrome.storage.local.remove([oldHistoryKey, oldCSSKey]);
-    } else {
-      // No migration needed, just update CSS storage for current (empty) history
-      const currentHistory = await getPromptHistory();
-      await updateCSSStorage(currentHistory);
-    }
-    
-    // Refresh history display since scope might have changed
-    await displayHistory();
-  });
+    await saveDomainWideState(); // Enregistre la nouvelle préférence
 
-  // Cleanup when popup/window is closed
-  window.addEventListener('beforeunload', cleanup);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-      cleanup();
+    const newKey = await getCurrentUrlKey(); // Clé pour le nouveau scope
+    if (oldKey !== newKey) { // Si le scope a réellement changé
+        if (oldHistory.length > 0) {
+            await chrome.storage.local.set({ [newKey]: oldHistory }); // Migrer l'historique
+            await chrome.storage.local.remove(oldKey); // Nettoyer l'ancien historique
+
+            // Migrer aussi le CSS
+            const oldCssKey = oldKey.replace('_history_', '_css_');
+            const newCssKey = newKey.replace('_history_', '_css_');
+            const oldCssResult = await chrome.storage.local.get([oldCssKey]);
+            if (oldCssResult[oldCssKey]) {
+                await chrome.storage.local.set({ [newCssKey]: oldCssResult[oldCssKey] });
+                await chrome.storage.local.remove(oldCssKey);
+            }
+        }
     }
+    // Mettre à jour l'affichage et le CSS sur la page
+    await displayHistory(); 
+    await reloadCSSOnPage();
   });
 
   applyButton?.addEventListener('click', async () => {
     const prompt = promptInput.value.trim();
-    
     if (!prompt) {
-      showStatus('Please enter a customization request', 'error');
+      showStatus('Please enter a customization request.', 'error');
+      return;
+    }
+    if (!currentTabId) {
+      showStatus('No active tab identified. Cannot apply changes.', 'error');
       return;
     }
 
+    setUIProcessing(true);
+    
     try {
-      setUIProcessing(true);
-      applyButton.textContent = 'Applying...';
-      applyButton.disabled = true;
-      
-      // Get current tab
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
-      // Check if we need to upload HTML (first request or different tab)
-      if (!currentFileId || currentTabId !== tab.id) {
+       if (!tab?.id || !tab?.url) {
+          throw new Error("Current tab is not valid for applying changes.");
+      }
+      // Vérifier si l'URL a changé depuis le dernier cache HTML (navigation SPA)
+      if (tab.id !== currentTabId || tab.url !== currentTabUrl || !pageHTMLCache) {
         showStatus('Getting page content...', 'loading');
-        
-        // Get page HTML
-        const htmlResponse = await chrome.tabs.sendMessage(tab.id!, { action: 'getHTML' });
+        const htmlResponse = await chrome.tabs.sendMessage(tab.id, { action: 'getHTML' });
         if (!htmlResponse?.html) {
-          throw new Error('Failed to get page content');
+          throw new Error('Failed to get page content.');
         }
-
-        showStatus('Uploading page content...', 'loading');
-        
-        // Initialize API service
-        const initialized = await anthropicService.initialize();
-        if (!initialized) {
-          throw new Error('API not configured. Please check settings.');
-        }
-
-        // Clean up previous file if exists
-        if (currentFileId) {
-          await anthropicService.deleteFile(currentFileId);
-        }
-
-        // Upload HTML to Files API
-        const uploadResponse = await anthropicService.uploadHTML(htmlResponse.html);
-        currentFileId = uploadResponse.fileId;
-        currentTabId = tab.id!;
-      } else {
-        // Initialize API service for subsequent requests
-        const initialized = await anthropicService.initialize();
-        if (!initialized) {
-          throw new Error('API not configured. Please check settings.');
-        }
+        pageHTMLCache = htmlResponse.html;
+        currentTabId = tab.id;
+        currentTabUrl = tab.url;
+      }
+      
+      const initialized = await openRouterService.initialize();
+      if (!initialized) {
+        throw new Error('API not configured. Please check settings.');
       }
 
       showStatus('Generating CSS...', 'loading');
+      const cssResponse = await openRouterService.generateCSS({
+        htmlContent: pageHTMLCache,
+        prompt: prompt
+      });
 
-      // Generate CSS using file ID
-      let cssResponse;
-      try {
-        cssResponse = await anthropicService.generateCSS({
-          fileId: currentFileId,
-          prompt: prompt
-        });
-      } catch (error) {
-        // If file not found, clear the file ID and retry with fresh upload
-        if (error instanceof Error && error.message.includes('File not found')) {
-          currentFileId = null;
-          currentTabId = null;
-          await saveState(false);
-          
-          showStatus('Re-uploading page content...', 'loading');
-          
-          // Get page HTML again
-          const htmlResponse = await chrome.tabs.sendMessage(tab.id!, { action: 'getHTML' });
-          if (!htmlResponse?.html) {
-            throw new Error('Failed to get page content');
-          }
-          
-          // Upload HTML to Files API
-          const uploadResponse = await anthropicService.uploadHTML(htmlResponse.html);
-          currentFileId = uploadResponse.fileId;
-          currentTabId = tab.id!;
-          
-          showStatus('Generating CSS...', 'loading');
-          
-          // Retry CSS generation
-          cssResponse = await anthropicService.generateCSS({
-            fileId: currentFileId,
-            prompt: prompt
-          });
-        } else {
-          throw error;
-        }
+      if (!cssResponse.css || cssResponse.css.trim() === "") {
+        console.warn("Generated CSS is empty.");
+        showStatus('Model returned empty CSS. Try rephrasing or a different model.', 'error');
+        setUIProcessing(false); // Important de le remettre à false ici
+        return;
       }
-
-      if (!cssResponse.css) {
-        throw new Error('No CSS generated');
-      }
-
-      // Log the generated CSS for debugging
       console.log('Generated CSS:', cssResponse.css);
 
       showStatus('Applying changes...', 'loading');
-      
-      // Inject CSS
-      const injectResponse = await chrome.tabs.sendMessage(tab.id!, { 
+      const injectResponse = await chrome.tabs.sendMessage(currentTabId, { 
         action: 'injectCSS', 
         css: cssResponse.css 
       });
 
       if (injectResponse?.success) {
-        showStatus('Changes applied.', 'success');
-        
-        // Add to history
-        await addToHistory(prompt, cssResponse.css);
-        
+        await addToHistory(prompt, cssResponse.css); // addToHistory appelle displayHistory et updateCSSStorage
         promptInput.value = '';
-        
-        // Save state with changes applied
-        await saveState(true);
+        showStatus('Changes applied!', 'success');
       } else {
-        throw new Error(injectResponse?.error || 'Failed to apply changes');
+        throw new Error(injectResponse?.error || 'Failed to apply changes to the page.');
       }
     } catch (error) {
+      console.error("Error in applyButton click:", error);
       showStatus(formatErrorMessage(error), 'error');
     } finally {
       setUIProcessing(false);
-      applyButton.textContent = 'Apply Changes';
-      applyButton.disabled = false;
     }
   });
 
-  // Add event listeners for the new buttons
   disableAllButton?.addEventListener('click', async () => {
+    setUIProcessing(true);
     try {
-      setUIProcessing(true);
-      
       const history = await getPromptHistory();
       if (history.length === 0) {
-        showStatus('No changes to disable', 'error');
+        showStatus('No changes to disable/enable.', 'error');
         return;
       }
+      const allCurrentlyDisabled = history.every(item => item.disabled);
+      const newDisabledStateForAll = !allCurrentlyDisabled;
 
-      // Check if all items are currently disabled
-      const allDisabled = history.every(item => item.disabled);
-      
-      // Toggle all items to the opposite state
-      const updatedHistory = history.map(item => ({ ...item, disabled: !allDisabled }));
+      const updatedHistory = history.map(item => ({ ...item, disabled: newDisabledStateForAll }));
       await savePromptHistory(updatedHistory);
-      
-      // Update the CSS storage to reflect the changes
       await updateCSSStorage(updatedHistory);
-      
-      // Reapply CSS changes
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const response = await chrome.tabs.sendMessage(tab.id!, { action: 'reloadCSS' });
-      
-      if (!response?.success) {
-        throw new Error(response?.error || 'Failed to reload CSS');
-      }
-      
-      // Update button text based on new state
-      disableAllButton.textContent = allDisabled ? 'Disable All' : 'Enable All';
-      
-      await displayHistory();
+      await displayHistory(); // Met à jour le texte du bouton "Disable All" / "Enable All"
+      await reloadCSSOnPage();
+      showStatus(newDisabledStateForAll ? 'All changes disabled.' : 'All changes enabled.', 'success');
     } catch (error) {
-      showStatus(formatErrorMessage(error) || 'Failed to toggle changes', 'error');
+      showStatus(formatErrorMessage(error) || 'Failed to toggle all changes.', 'error');
     } finally {
       setUIProcessing(false);
     }
   });
 
   removeAllButton?.addEventListener('click', async () => {
-    try {
-      const history = await getPromptHistory();
-      if (history.length === 0) {
-        showStatus('No changes to remove', 'error');
+    const history = await getPromptHistory();
+    if (history.length === 0) {
+        showStatus('No changes to remove.', 'error');
         return;
-      }
+    }
+    const confirmed = confirm("Are you sure you want to remove ALL applied changes for this page/domain? This action cannot be undone.");
+    if (!confirmed) return;
+
+    setUIProcessing(true);
+    try {
+      await savePromptHistory([]); // Vide l'historique pour la clé actuelle
+      await updateCSSStorage([]); // Vide le CSS stocké pour la clé actuelle (via histoire vide)
       
-      // Clear history
-      await savePromptHistory([]);
-      
-      // Remove CSS from storage
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const url = new URL(tab.url!);
-      const pageUrlKey = `pagemagic_css_${url.origin}${url.pathname}`;
-      const domainUrlKey = `pagemagic_css_${url.origin}`;
-      await chrome.storage.local.remove([pageUrlKey, domainUrlKey]);
-      
-      // Remove CSS from page
-      try {
-        const response = await chrome.tabs.sendMessage(tab.id!, { action: 'removeCSS' });
-        if (!response?.success) {
-          throw new Error(response?.error || 'Failed to remove CSS');
-        }
-      } catch (messageError) {
-        // If content script not responding, try to remove CSS directly
-        if (messageError instanceof Error && messageError.message.includes('Receiving end does not exist')) {
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id! },
-            func: () => {
-              const pagemagicStyles = document.querySelectorAll('style[data-pagemagic="true"]');
-              pagemagicStyles.forEach(style => style.remove());
+      if (currentTabId) {
+          try {
+            const response = await chrome.tabs.sendMessage(currentTabId, { action: 'removeCSS' });
+            if (!response?.success) {
+              console.warn('Failed to remove CSS via message, content script might not be active:', response?.error);
+              // Fallback si le content script ne répond pas (ex: rechargement de page, erreur)
+              await chrome.scripting.executeScript({
+                target: { tabId: currentTabId },
+                func: () => {
+                  const pagemagicStyles = document.querySelectorAll('style[data-pagemagic="true"]');
+                  pagemagicStyles.forEach(style => style.remove());
+                }
+              });
             }
-          });
-        } else {
-          throw messageError;
-        }
+          } catch (e) {
+             console.warn('Error sending removeCSS message or executing script:', e);
+             // Tenter le script d'exécution comme fallback
+             await chrome.scripting.executeScript({
+                target: { tabId: currentTabId },
+                func: () => {
+                  const pagemagicStyles = document.querySelectorAll('style[data-pagemagic="true"]');
+                  pagemagicStyles.forEach(style => style.remove());
+                }
+              });
+          }
       }
-      
-      historySection.style.display = 'none';
-      
-      // Save state with changes removed
-      await saveState(false);
+      await displayHistory(); // Met à jour l'UI pour refléter l'historique vide
+      showStatus('All changes removed.', 'success');
     } catch (error) {
-      showStatus(formatErrorMessage(error) || 'Failed to remove all changes', 'error');
+      showStatus(formatErrorMessage(error) || 'Failed to remove all changes.', 'error');
     } finally {
       setUIProcessing(false);
+    }
+  });
+
+  // Vérifier l'URL actuelle lorsque la popup gagne le focus (pour les SPA)
+  window.addEventListener('focus', async () => {
+    if (currentTabId) {
+        const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+        if (tab && tab.id === currentTabId && tab.url && tab.url !== currentTabUrl) {
+            console.log("URL changed in focused tab, reloading state.");
+            pageHTMLCache = null; // Invalider le cache HTML
+            currentTabUrl = tab.url;
+            await loadDomainWideState(); // Le scope peut dépendre du nouveau path si pas domain-wide
+            await displayHistory();
+            // Pas besoin de recharger le CSS sur la page ici, car si l'URL a changé,
+            // le content_script de la nouvelle page aura déjà chargé le CSS approprié.
+        }
     }
   });
 

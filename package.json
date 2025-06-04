@@ -17,6 +17,5 @@
     "vite": "^6.3.5"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.52.0"
   }
 }

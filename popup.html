@@ -26,23 +26,17 @@
   
   <div class="button-row">
     <button id="apply-changes">Apply Changes</button>
-    <button id="undo-changes" style="display: none;">Undo All</button>
     <div id="status" style="font-size: 12px; display: none;"></div>
   </div>
   
-  <div id="usage-section" style="margin-top: 16px; padding: 8px; background: #f8f9fa; border-radius: 4px; font-size: 11px; color: #666;">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-      <span>Today's usage:</span>
-      <span id="daily-cost" style="font-weight: 500;">$0.00</span>
-    </div>
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2px;">
-      <span>Total usage:</span>
-      <span id="total-cost" style="font-weight: 500;">$0.00</span>
-    </div>
-  </div>
-
   <div id="history-section" style="margin-top: 16px; display: none;">
-    <h3 style="font-size: 14px; margin: 0 0 8px 0; color: #666;">Applied Changes</h3>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+      <h3 style="font-size: 14px; margin: 0; color: #666;">Applied Changes</h3>
+      <div style="display: flex; gap: 8px;">
+        <button id="disable-all" class="history-disable">Disable All</button>
+        <button id="remove-all" class="history-delete">Remove All</button>
+      </div>
+    </div>
     <div id="history-list"></div>
   </div>
   <script type="module" src="dist/popup.js"></script>

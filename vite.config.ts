@@ -17,8 +17,20 @@ export default defineConfig({
         assetFileNames: '[name].[ext]'
       }
     },
-    minify: false,
-    sourcemap: false
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true,
+        drop_debugger: true
+      },
+      format: {
+        comments: false
+      }
+    },
+    sourcemap: false,
+    cssMinify: true,
+    cssCodeSplit: false,
+    target: 'es2020'
   },
   define: {
     global: 'globalThis',

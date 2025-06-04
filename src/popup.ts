@@ -40,7 +40,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const promptInput = document.getElementById('prompt-input') as HTMLTextAreaElement;
   const applyButton = document.getElementById('apply-changes') as HTMLButtonElement;
-  const undoButton = document.getElementById('undo-changes') as HTMLButtonElement;
   const status = document.getElementById('status') as HTMLDivElement;
   const historySection = document.getElementById('history-section') as HTMLDivElement;
   const historyList = document.getElementById('history-list') as HTMLDivElement;
@@ -48,6 +47,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const totalCost = document.getElementById('total-cost') as HTMLSpanElement;
   const settingsLink = document.getElementById('settings-link') as HTMLAnchorElement;
   const domainWideCheckbox = document.getElementById('domain-wide') as HTMLInputElement;
+  const disableAllButton = document.getElementById('disable-all') as HTMLButtonElement;
+  const removeAllButton = document.getElementById('remove-all') as HTMLButtonElement;
   
   let currentFileId: string | null = null;
   let currentTabId: number | null = null;
@@ -125,6 +126,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Update the CSS storage to reflect the change
     await updateCSSStorage(updatedHistory);
+    
+    // Update disable-all button state before displaying history
+    const allDisabled = updatedHistory.every(item => item.disabled);
+    disableAllButton.disabled = allDisabled;
+    
     await displayHistory();
   }
   
@@ -151,6 +157,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
   
+  // Update disable-all button state based on history
+  async function updateDisableAllButtonState() {
+    const history = await getPromptHistory();
+    if (history.length === 0) {
+      disableAllButton.disabled = true;
+      disableAllButton.style.opacity = '0.6';
+      disableAllButton.style.cursor = 'not-allowed';
+      return;
+    }
+    const allDisabled = history.every(item => item.disabled);
+    disableAllButton.disabled = allDisabled;
+    disableAllButton.style.opacity = allDisabled ? '0.6' : '1';
+    disableAllButton.style.cursor = allDisabled ? 'not-allowed' : 'pointer';
+  }
+  
   // Display prompt history in the UI
   async function displayHistory(): Promise<void> {
     const history = await getPromptHistory();
@@ -173,6 +194,38 @@ document.addEventListener('DOMContentLoaded', async () => {
       
       const buttonContainer = document.createElement('div');
       buttonContainer.className = 'history-buttons';
+      
+      const editButton = document.createElement('button');
+      editButton.className = 'history-edit';
+      editButton.textContent = 'Edit';
+      editButton.addEventListener('click', async () => {
+        try {
+          // Remove from history
+          await removeFromHistory(item.id);
+          
+          // Put prompt back in text area
+          promptInput.value = item.prompt;
+          
+          // Focus the text area for immediate editing
+          promptInput.focus();
+          
+          // Reapply remaining CSS changes
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          const response = await chrome.tabs.sendMessage(tab.id!, { action: 'reloadCSS' });
+          
+          if (response?.success) {
+            // Update undo button visibility
+            const updatedHistory = await getPromptHistory();
+            if (updatedHistory.length === 0) {
+              removeAllButton.style.display = 'none';
+            }
+          } else {
+            throw new Error(response?.error || 'Failed to reload CSS');
+          }
+        } catch (error) {
+          showStatus(formatErrorMessage(error) || 'Failed to edit change', 'error');
+        }
+      });
       
       const disableButton = document.createElement('button');
       disableButton.className = 'history-disable';
@@ -208,10 +261,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (response?.success) {
             showStatus('Change removed', 'success');
             
-            // Update undo button visibility
+            // Update history display
             const updatedHistory = await getPromptHistory();
             if (updatedHistory.length === 0) {
-              undoButton.style.display = 'none';
+              historySection.style.display = 'none';
             }
           } else {
             throw new Error(response?.error || 'Failed to reload CSS');
@@ -221,40 +274,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       });
       
-      const editButton = document.createElement('button');
-      editButton.className = 'history-edit';
-      editButton.textContent = 'Edit';
-      editButton.addEventListener('click', async () => {
-        try {
-          // Remove from history
-          await removeFromHistory(item.id);
-          
-          // Put prompt back in text area
-          promptInput.value = item.prompt;
-          
-          // Focus the text area for immediate editing
-          promptInput.focus();
-          
-          // Reapply remaining CSS changes
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          const response = await chrome.tabs.sendMessage(tab.id!, { action: 'reloadCSS' });
-          
-          if (response?.success) {
-            // Update undo button visibility
-            const updatedHistory = await getPromptHistory();
-            if (updatedHistory.length === 0) {
-              undoButton.style.display = 'none';
-            }
-          } else {
-            throw new Error(response?.error || 'Failed to reload CSS');
-          }
-        } catch (error) {
-          showStatus(formatErrorMessage(error) || 'Failed to edit change', 'error');
-        }
-      });
-      
-      buttonContainer.appendChild(disableButton);
       buttonContainer.appendChild(editButton);
+      buttonContainer.appendChild(disableButton);
       buttonContainer.appendChild(deleteButton);
       
       // Apply disabled styling to the prompt if disabled
@@ -266,6 +287,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       historyItem.appendChild(buttonContainer);
       historyList.appendChild(historyItem);
     });
+
+    // Update disable-all button state
+    await updateDisableAllButtonState();
   }
   
   // Load persisted state on popup open
@@ -278,10 +302,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (state) {
         currentFileId = state.fileId;
         currentTabId = tab.id!;
-        
-        if (state.hasChanges) {
-          undoButton.style.display = 'inline-block';
-        }
       }
       
       // Also check if there are stored customizations for this URL or domain
@@ -292,19 +312,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       const pageCSS = cssResult[pageUrlKey];
       const domainCSS = cssResult[domainUrlKey];
       
-      if ((pageCSS && Array.isArray(pageCSS) && pageCSS.length > 0) ||
-          (domainCSS && Array.isArray(domainCSS) && domainCSS.length > 0)) {
-        undoButton.style.display = 'inline-block';
-      }
-      
       // Load domain-wide checkbox state FIRST (needed for history display)
       await loadDomainWideState();
       
       // Load and display prompt history
       await displayHistory();
       
-      // Load usage information
-      await loadUsageInfo();
+      // Show history section if there are customizations
+      const history = await getPromptHistory();
+      if (history.length > 0) {
+        historySection.style.display = 'block';
+        // Update disable-all button state
+        await updateDisableAllButtonState();
+      }
     } catch (error) {
       console.warn('Failed to load state:', error);
     }
@@ -323,7 +343,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.warn('Failed to save state:', error);
     }
   }
-  
+
   function formatErrorMessage(error: any): string {
     if (error instanceof Error) {
       // Check if the error message contains a 429 status or rate limit indication
@@ -351,7 +371,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Disable/enable UI during processing
   function setUIProcessing(processing: boolean) {
     applyButton.disabled = processing;
-    undoButton.disabled = processing;
     promptInput.readOnly = processing;
     
     if (processing) {
@@ -360,19 +379,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else {
       promptInput.style.opacity = '1';
       promptInput.style.cursor = 'text';
-    }
-  }
-
-  // Load and display usage information
-  async function loadUsageInfo() {
-    try {
-      const totalUsage = await anthropicService.getTotalUsage();
-      const dailyUsage = await anthropicService.getDailyUsage();
-      
-      dailyCost.textContent = `$${dailyUsage.totalCost.toFixed(4)}`;
-      totalCost.textContent = `$${totalUsage.totalCost.toFixed(4)}`;
-    } catch (error) {
-      console.warn('Failed to load usage info:', error);
     }
   }
 
@@ -584,24 +590,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         css: cssResponse.css 
       });
 
-      if (!injectResponse?.success) {
+      if (injectResponse?.success) {
+        showStatus('Changes applied.', 'success');
+        
+        // Add to history
+        await addToHistory(prompt, cssResponse.css);
+        
+        promptInput.value = '';
+        
+        // Save state with changes applied
+        await saveState(true);
+      } else {
         throw new Error(injectResponse?.error || 'Failed to apply changes');
       }
-
-      showStatus('Changes applied.', 'success');
-      undoButton.style.display = 'inline-block';
-      
-      // Add to history
-      await addToHistory(prompt, cssResponse.css);
-      
-      // Update usage display
-      await loadUsageInfo();
-      
-      promptInput.value = '';
-      
-      // Save state with changes applied
-      await saveState(true);
-      
     } catch (error) {
       showStatus(formatErrorMessage(error), 'error');
     } finally {
@@ -610,81 +611,93 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  undoButton?.addEventListener('click', async () => {
+  // Add event listeners for the new buttons
+  disableAllButton?.addEventListener('click', async () => {
     try {
       setUIProcessing(true);
+      showStatus('Disabling all changes...', 'loading');
+      
+      const history = await getPromptHistory();
+      if (history.length === 0) {
+        showStatus('No changes to disable', 'error');
+        return;
+      }
+
+      const updatedHistory = history.map(item => ({ ...item, disabled: true }));
+      await savePromptHistory(updatedHistory);
+      
+      // Update the CSS storage to reflect the changes
+      await updateCSSStorage(updatedHistory);
+      
+      // Reapply CSS changes
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const response = await chrome.tabs.sendMessage(tab.id!, { action: 'reloadCSS' });
       
-      showStatus('Removing changes...', 'loading');
+      if (!response?.success) {
+        throw new Error(response?.error || 'Failed to reload CSS');
+      }
       
+      showStatus('All changes disabled', 'success');
+      await displayHistory();
+      
+      // Explicitly disable the button since all items are now disabled
+      disableAllButton.disabled = true;
+    } catch (error) {
+      showStatus(formatErrorMessage(error) || 'Failed to disable all changes', 'error');
+    } finally {
+      setUIProcessing(false);
+    }
+  });
+
+  removeAllButton?.addEventListener('click', async () => {
+    try {
+      setUIProcessing(true);
+      showStatus('Removing all changes...', 'loading');
+      
+      const history = await getPromptHistory();
+      if (history.length === 0) {
+        showStatus('No changes to remove', 'error');
+        return;
+      }
+      
+      // Clear history
+      await savePromptHistory([]);
+      
+      // Remove CSS from storage
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const url = new URL(tab.url!);
+      const pageUrlKey = `pagemagic_css_${url.origin}${url.pathname}`;
+      const domainUrlKey = `pagemagic_css_${url.origin}`;
+      await chrome.storage.local.remove([pageUrlKey, domainUrlKey]);
+      
+      // Remove CSS from page
       try {
         const response = await chrome.tabs.sendMessage(tab.id!, { action: 'removeCSS' });
-        
-        if (response?.success) {
-          showStatus('Changes removed', 'success');
-          undoButton.style.display = 'none';
-          
-          // Clear history when all changes are removed
-          await savePromptHistory([]);
-          await displayHistory();
-          
-          // Save state with changes removed
-          await saveState(false);
-        } else {
-          throw new Error(response?.error || 'Failed to remove changes');
+        if (!response?.success) {
+          throw new Error(response?.error || 'Failed to remove CSS');
         }
       } catch (messageError) {
-        // If content script not responding, try to remove CSS directly via script injection
+        // If content script not responding, try to remove CSS directly
         if (messageError instanceof Error && messageError.message.includes('Receiving end does not exist')) {
-          showStatus('Removing customizations directly...', 'loading');
-          
-          try {
-            // Inject script to remove PageMagic styles directly
-            await chrome.scripting.executeScript({
-              target: { tabId: tab.id! },
-              func: () => {
-                // Remove all PageMagic style elements
-                const pagemagicStyles = document.querySelectorAll('style[data-pagemagic="true"]');
-                pagemagicStyles.forEach(style => style.remove());
-              }
-            });
-            
-            // Remove CSS from storage (both page-specific and domain-wide)
-            const url = new URL(tab.url!);
-            const pageUrlKey = `pagemagic_css_${url.origin}${url.pathname}`;
-            const domainUrlKey = `pagemagic_css_${url.origin}`;
-            await chrome.storage.local.remove([pageUrlKey, domainUrlKey]);
-            
-            showStatus('Changes removed', 'success');
-            undoButton.style.display = 'none';
-            
-            // Clear history when all changes are removed
-            await savePromptHistory([]);
-            await displayHistory();
-            
-            await saveState(false);
-          } catch (scriptError) {
-            // Final fallback - just remove from storage
-            const url = new URL(tab.url!);
-            const pageUrlKey = `pagemagic_css_${url.origin}${url.pathname}`;
-            const domainUrlKey = `pagemagic_css_${url.origin}`;
-            await chrome.storage.local.remove([pageUrlKey, domainUrlKey]);
-            
-            showStatus('Stored customizations removed. Please refresh the page.', 'success');
-            undoButton.style.display = 'none';
-            
-            // Clear history when all changes are removed
-            await savePromptHistory([]);
-            await displayHistory();
-            
-            await saveState(false);
-          }
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id! },
+            func: () => {
+              const pagemagicStyles = document.querySelectorAll('style[data-pagemagic="true"]');
+              pagemagicStyles.forEach(style => style.remove());
+            }
+          });
         } else {
           throw messageError;
         }
       }
+      
+      showStatus('All changes removed', 'success');
+      historySection.style.display = 'none';
+      
+      // Save state with changes removed
+      await saveState(false);
     } catch (error) {
-      showStatus(formatErrorMessage(error) || 'Failed to undo changes', 'error');
+      showStatus(formatErrorMessage(error) || 'Failed to remove all changes', 'error');
     } finally {
       setUIProcessing(false);
     }

@@ -127,10 +127,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Update the CSS storage to reflect the change
     await updateCSSStorage(updatedHistory);
     
-    // Update disable-all button state before displaying history
-    const allDisabled = updatedHistory.every(item => item.disabled);
-    disableAllButton.disabled = allDisabled;
-    
     await displayHistory();
   }
   
@@ -157,21 +153,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
   
-  // Update disable-all button state based on history
-  async function updateDisableAllButtonState() {
-    const history = await getPromptHistory();
-    if (history.length === 0) {
-      disableAllButton.disabled = true;
-      disableAllButton.style.opacity = '0.6';
-      disableAllButton.style.cursor = 'not-allowed';
-      return;
-    }
-    const allDisabled = history.every(item => item.disabled);
-    disableAllButton.disabled = allDisabled;
-    disableAllButton.style.opacity = allDisabled ? '0.6' : '1';
-    disableAllButton.style.cursor = allDisabled ? 'not-allowed' : 'pointer';
-  }
-  
   // Display prompt history in the UI
   async function displayHistory(): Promise<void> {
     const history = await getPromptHistory();
@@ -183,6 +164,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     historySection.style.display = 'block';
     historyList.innerHTML = '';
+    
+    // Update button text based on current state of all items
+    const allDisabled = history.every(item => item.disabled);
+    disableAllButton.textContent = allDisabled ? 'Enable All' : 'Disable All';
     
     history.forEach(item => {
       const historyItem = document.createElement('div');
@@ -251,7 +236,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       deleteButton.textContent = 'Remove';
       deleteButton.addEventListener('click', async () => {
         try {
-          showStatus('Removing change...', 'loading');
           await removeFromHistory(item.id);
           
           // Reapply remaining CSS changes
@@ -259,8 +243,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const response = await chrome.tabs.sendMessage(tab.id!, { action: 'reloadCSS' });
           
           if (response?.success) {
-            showStatus('Change removed', 'success');
-            
             // Update history display
             const updatedHistory = await getPromptHistory();
             if (updatedHistory.length === 0) {
@@ -287,9 +269,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       historyItem.appendChild(buttonContainer);
       historyList.appendChild(historyItem);
     });
-
-    // Update disable-all button state
-    await updateDisableAllButtonState();
   }
   
   // Load persisted state on popup open
@@ -322,8 +301,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       const history = await getPromptHistory();
       if (history.length > 0) {
         historySection.style.display = 'block';
-        // Update disable-all button state
-        await updateDisableAllButtonState();
       }
     } catch (error) {
       console.warn('Failed to load state:', error);
@@ -349,6 +326,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Check if the error message contains a 429 status or rate limit indication
       if (error.message.includes('429') || error.message.toLowerCase().includes('rate limit')) {
         return 'Rate limit exceeded.';
+      }
+      if (error.message.includes('prompt is too long')) {
+        return 'Page content is too long (> 200k tokens).';
       }
       return error.message;
     }
@@ -495,6 +475,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       setUIProcessing(true);
       applyButton.textContent = 'Applying...';
+      applyButton.disabled = true;
       
       // Get current tab
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -608,6 +589,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } finally {
       setUIProcessing(false);
       applyButton.textContent = 'Apply Changes';
+      applyButton.disabled = false;
     }
   });
 
@@ -615,7 +597,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   disableAllButton?.addEventListener('click', async () => {
     try {
       setUIProcessing(true);
-      showStatus('Disabling all changes...', 'loading');
       
       const history = await getPromptHistory();
       if (history.length === 0) {
@@ -623,7 +604,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
 
-      const updatedHistory = history.map(item => ({ ...item, disabled: true }));
+      // Check if all items are currently disabled
+      const allDisabled = history.every(item => item.disabled);
+      
+      // Toggle all items to the opposite state
+      const updatedHistory = history.map(item => ({ ...item, disabled: !allDisabled }));
       await savePromptHistory(updatedHistory);
       
       // Update the CSS storage to reflect the changes
@@ -637,13 +622,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         throw new Error(response?.error || 'Failed to reload CSS');
       }
       
-      showStatus('All changes disabled', 'success');
-      await displayHistory();
+      // Update button text based on new state
+      disableAllButton.textContent = allDisabled ? 'Disable All' : 'Enable All';
       
-      // Explicitly disable the button since all items are now disabled
-      disableAllButton.disabled = true;
+      await displayHistory();
     } catch (error) {
-      showStatus(formatErrorMessage(error) || 'Failed to disable all changes', 'error');
+      showStatus(formatErrorMessage(error) || 'Failed to toggle changes', 'error');
     } finally {
       setUIProcessing(false);
     }
@@ -651,9 +635,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   removeAllButton?.addEventListener('click', async () => {
     try {
-      setUIProcessing(true);
-      showStatus('Removing all changes...', 'loading');
-      
       const history = await getPromptHistory();
       if (history.length === 0) {
         showStatus('No changes to remove', 'error');
@@ -691,7 +672,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
       
-      showStatus('All changes removed', 'success');
       historySection.style.display = 'none';
       
       // Save state with changes removed

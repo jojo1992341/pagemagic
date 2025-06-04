@@ -74,7 +74,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     models.forEach(model => {
       const option = document.createElement('option');
       option.value = model.id;
-      option.textContent = model.display_name || model.id;
+      option.textContent = `${model.display_name} (${model.id})`;
       modelSelect.appendChild(option);
     });
   }

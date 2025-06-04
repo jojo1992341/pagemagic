@@ -10,8 +10,8 @@ interface CSSGenerationResponse {
   usage?: {
     input_tokens: number;
     output_tokens: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
+    cache_creation_input_tokens: number | null;
+    cache_read_input_tokens: number | null;
     cost: number;
   };
 }
@@ -32,11 +32,11 @@ interface ModelsResponse {
 
 // Model pricing per million tokens
 const MODEL_PRICING: Record<string, { 
-  input: number; 
-  output: number; 
-  cache_5m: number; 
-  cache_1h: number; 
-  cache_hits: number; 
+  input: number;  // $/M tokens
+  output: number; // $/M tokens
+  cache_5m: number; // $/M tokens
+  cache_1h: number; // $/M tokens
+  cache_hits: number; // $/M tokens
 }> = {
   'claude-opus-4-20241022': { 
     input: 15, 
@@ -46,6 +46,13 @@ const MODEL_PRICING: Record<string, {
     cache_hits: 1.50 
   },
   'claude-sonnet-4-20250514': { 
+    input: 3, 
+    output: 15, 
+    cache_5m: 3.75, 
+    cache_1h: 6, 
+    cache_hits: 0.30 
+  },
+  'claude-3-7-sonnet-20250219': { 
     input: 3, 
     output: 15, 
     cache_5m: 3.75, 
@@ -80,7 +87,7 @@ const MODEL_PRICING: Record<string, {
     cache_1h: 0.50, 
     cache_hits: 0.03 
   },
-  // Default fallback pricing (use Sonnet 3.5 rates)
+  // Default fallback pricing (use Sonnet 3.7 rates)
   'default': { 
     input: 3, 
     output: 15, 
@@ -90,17 +97,23 @@ const MODEL_PRICING: Record<string, {
   }
 };
 
+const DEPRECATED_MODELS = [
+  'claude-2.0',
+  'claude-2.1',
+  'claude-3-sonnet-20240229',
+]
+
 function calculateCost(
   model: string, 
   usage: {
     input_tokens: number;
     output_tokens: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-    cache_creation?: {
-      ephemeral_5m_input_tokens?: number;
-      ephemeral_1h_input_tokens?: number;
-    };
+    cache_creation_input_tokens: number | null;
+    cache_read_input_tokens: number | null;
+    cache_creation: {
+      ephemeral_5m_input_tokens: number | null;
+      ephemeral_1h_input_tokens: number | null;
+    } | null;
   }
 ): number {
   const pricing = MODEL_PRICING[model] || MODEL_PRICING.default;
@@ -308,6 +321,7 @@ Your response must contain ONLY valid CSS rules and nothing else.`;
       // Filter for models that can be used for messages (type 'model')
       return response.data
         .filter(model => model.type === 'model')
+        .filter(model => !DEPRECATED_MODELS.includes(model.id))
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .map(model => ({
           id: model.id,

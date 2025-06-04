@@ -10,7 +10,7 @@
     "scripting"
   ],
   "host_permissions": [
-    "https://api.anthropic.com/*"
+    "https://openrouter.ai/*"
   ],
   "action": {
     "default_popup": "popup.html",

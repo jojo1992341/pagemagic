@@ -1,5 +1,5 @@
 // pagemagic-main/src/settings.ts
-import { openRouterService } from './api.js'; // Modifié ici
+import { openRouterService } from './api.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
   const apiKeyInput = document.getElementById('api-key') as HTMLInputElement;
@@ -22,25 +22,34 @@ document.addEventListener('DOMContentLoaded', async () => {
   const totalSize = document.getElementById('total-size') as HTMLSpanElement;
   const customizedSitesList = document.getElementById('customized-sites-list') as HTMLDivElement;
 
+  // Stocker les valeurs récupérées pour éviter des appels répétés à chrome.storage.sync
+  let currentSettings = {
+    openRouterApiKey: null as string | null,
+    selectedModel: null as string | null,
+  };
+
   // Load existing settings
-  // Modifié: anthropicApiKey -> openRouterApiKey
-  const result = await chrome.storage.sync.get(['openRouterApiKey', 'selectedModel']);
-  if (result.openRouterApiKey) {
-    apiKeyInput.value = result.openRouterApiKey;
+  const storedSettings = await chrome.storage.sync.get(['openRouterApiKey', 'selectedModel']);
+  currentSettings.openRouterApiKey = storedSettings.openRouterApiKey || null;
+  currentSettings.selectedModel = storedSettings.selectedModel || null;
+
+  if (currentSettings.openRouterApiKey) {
+    apiKeyInput.value = currentSettings.openRouterApiKey;
   }
 
   // Load available models
   async function loadModels() {
+    modelSelect.innerHTML = '<option value="">Loading models...</option>';
+    modelSelect.disabled = true;
+    testBtn.disabled = true;
+
     try {
-      // Modifié: result.anthropicApiKey -> result.openRouterApiKey
-      if (result.openRouterApiKey) {
-        // Modifié: anthropicApiKey -> openRouterApiKey
-        await chrome.storage.sync.set({ openRouterApiKey: result.openRouterApiKey });
-        // Modifié: anthropicService -> openRouterService
-        const initialized = await openRouterService.initialize();
+      if (currentSettings.openRouterApiKey) {
+        // L'initialisation de openRouterService se fait maintenant avec la clé stockée
+        // ou celle qui vient d'être saisie.
+        const initialized = await openRouterService.initialize(); // Tentera de charger la clé depuis storage
         
         if (initialized) {
-          // Modifié: anthropicService -> openRouterService
           const models = await openRouterService.getAvailableModels();
           populateModelSelect(models);
           
@@ -50,36 +59,38 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
           await chrome.storage.local.set({ pagemagic_model_lookup: modelLookup });
           
-          if (result.selectedModel && models.some(m => m.id === result.selectedModel)) {
-            modelSelect.value = result.selectedModel;
+          if (currentSettings.selectedModel && models.some(m => m.id === currentSettings.selectedModel)) {
+            modelSelect.value = currentSettings.selectedModel;
           } else if (models.length > 0) {
             modelSelect.value = models[0].id; 
+            currentSettings.selectedModel = models[0].id; // Mettre à jour le modèle sélectionné
           }
+          
           modelSelect.disabled = models.length === 0;
           testBtn.disabled = models.length === 0;
+
           if (models.length === 0) {
             modelSelect.innerHTML = '<option value="">No (free) models found</option>';
+            showStatus('No (free) models found for this API key or check network.', 'error');
           }
         } else {
-            modelSelect.innerHTML = '<option value="">API Key Error or No Network</option>';
-            modelSelect.disabled = true;
-            testBtn.disabled = true;
+            // Cas où initialize retourne false (pas de clé valide dans storage)
+            modelSelect.innerHTML = '<option value="">API Key Invalid or Not Set</option>';
+            showStatus('API Key is invalid or not set in storage.', 'error');
         }
       } else {
         modelSelect.innerHTML = '<option value="">No API Key found</option>';
-        modelSelect.disabled = true;
-        testBtn.disabled = true;
       }
     } catch (error) {
-      console.error('Failed to load models:', error); // Modifié le message d'erreur
-      modelSelect.innerHTML = `<option value="">Error: ${(error as Error).message || 'Failed to load models'}</option>`;
-      modelSelect.disabled = true;
-      testBtn.disabled = true;
+      console.error('Failed to load models:', error);
+      const errorMessage = (error instanceof Error) ? error.message : 'Unknown error loading models';
+      modelSelect.innerHTML = `<option value="">Error loading models</option>`;
+      showStatus(`Error loading models: ${errorMessage}`, 'error');
     }
   }
 
-  function populateModelSelect(models: any[]) {
-    modelSelect.innerHTML = '';
+  function populateModelSelect(models: { id: string, display_name: string }[]) {
+    modelSelect.innerHTML = ''; // Important pour effacer "Loading..."
     if (models.length === 0) {
       modelSelect.innerHTML = '<option value="">No (free) models found</option>';
       modelSelect.disabled = true;
@@ -88,8 +99,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     models.forEach(model => {
       const option = document.createElement('option');
       option.value = model.id;
-      // Le display_name contient déjà l'ID ou le nom complet d'OpenRouter
-      option.textContent = `${model.display_name}`; 
+      option.textContent = model.display_name;
       modelSelect.appendChild(option);
     });
     modelSelect.disabled = false;
@@ -101,87 +111,53 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadCustomizedSites();
 
   apiKeyInput.addEventListener('input', async () => {
-    const currentKey = apiKeyInput.value.trim();
-    // Modifié: sk-ant- -> sk-or- // OpenRouter keys start with sk-or-
-    if (currentKey && currentKey.startsWith('sk-or-') && currentKey !== result.openRouterApiKey) {
-      modelSelect.innerHTML = '<option value="">Loading models...</option>';
-      modelSelect.disabled = true;
-      testBtn.disabled = true;
-      
-      try {
-        // Modifié: anthropicApiKey -> openRouterApiKey
-        await chrome.storage.sync.set({ openRouterApiKey: currentKey });
-        result.openRouterApiKey = currentKey; // Mettre à jour la variable locale
-        // Modifié: anthropicService -> openRouterService
-        const initialized = await openRouterService.initialize();
-        
-        if (initialized) {
-          // Modifié: anthropicService -> openRouterService
-          const models = await openRouterService.getAvailableModels();
-          populateModelSelect(models);
-          
-          const modelLookup: Record<string, string> = {};
-          models.forEach(model => {
-            modelLookup[model.id] = model.display_name;
-          });
-          await chrome.storage.local.set({ pagemagic_model_lookup: modelLookup });
-          
-          if (models.length > 0) {
-            modelSelect.value = models[0].id;
-            testBtn.disabled = false;
-          } else {
-            testBtn.disabled = true;
-          }
-           modelSelect.disabled = models.length === 0;
-
-        } else {
-             modelSelect.innerHTML = '<option value="">API Key Error or No Network</option>';
-        }
-      } catch (error) {
-        console.error('Failed to reload models:', error); // Modifié
-        modelSelect.innerHTML = `<option value="">Error: ${(error as Error).message || 'Failed to load'}</option>`;
-        modelSelect.disabled = true;
-        testBtn.disabled = true;
-      }
-    } else if (!currentKey) {
+    const newApiKey = apiKeyInput.value.trim();
+    // Mettre à jour la clé dans currentSettings immédiatement pour que loadModels l'utilise
+    currentSettings.openRouterApiKey = newApiKey || null; 
+    
+    if (newApiKey && newApiKey.startsWith('sk-or-')) {
+        // Tentative de chargement des modèles avec la nouvelle clé
+        // On suppose que saveBtn sera cliqué pour la persistance
+        await chrome.storage.sync.set({ openRouterApiKey: newApiKey }); // Sauvegarde temporaire pour initialize
+        await loadModels();
+    } else if (!newApiKey) {
         modelSelect.innerHTML = '<option value="">No API Key found</option>';
         modelSelect.disabled = true;
         testBtn.disabled = true;
+    } else if (newApiKey && !newApiKey.startsWith('sk-or-')) {
+        modelSelect.innerHTML = '<option value="">Invalid API Key format</option>';
+        modelSelect.disabled = true;
+        testBtn.disabled = true;
+        showStatus('OpenRouter API key should start with sk-or-', 'error');
     }
   });
 
   async function loadUsageInfo() {
     try {
-      // Modifié: anthropicService -> openRouterService
       const totalUsage = await openRouterService.getTotalUsage();
       const dailyUsage = await openRouterService.getDailyUsage();
       
-      // Pour les modèles gratuits, le coût sera souvent de 0.
-      dailyUsageCost.textContent = `$${dailyUsage.totalCost.toFixed(6)}`; // plus de précision pour les micro-coûts
-      dailyUsageRequests.textContent = `${dailyUsage.requests} requests`;
+      dailyUsageCost.textContent = `$${(dailyUsage.totalCost || 0).toFixed(6)}`;
+      dailyUsageRequests.textContent = `${dailyUsage.requests || 0} requests`;
       
-      totalUsageCost.textContent = `$${totalUsage.totalCost.toFixed(6)}`;
-      totalUsageRequests.textContent = `${totalUsage.totalRequests} requests`;
+      totalUsageCost.textContent = `$${(totalUsage.totalCost || 0).toFixed(6)}`;
+      totalUsageRequests.textContent = `${totalUsage.totalRequests || 0} requests`;
       
       const lookupResult = await chrome.storage.local.get(['pagemagic_model_lookup']);
       const modelLookup = lookupResult.pagemagic_model_lookup || {};
       
       modelBreakdownList.innerHTML = '';
       if (dailyUsage.models && Object.keys(dailyUsage.models).length > 0) {
-        const sortedDailyEntries = Object.entries(dailyUsage.models).sort(([modelIdA], [modelIdB]) => {
-          const modelNameA = modelLookup[modelIdA] || modelIdA;
-          const modelNameB = modelLookup[modelIdB] || modelIdB;
-          return modelNameA.localeCompare(modelNameB);
-        });
-        
+        const sortedDailyEntries = Object.entries(dailyUsage.models).sort(([modelIdA], [modelIdB]) => 
+          (modelLookup[modelIdA] || modelIdA).localeCompare(modelLookup[modelIdB] || modelIdB)
+        );
         sortedDailyEntries.forEach(([modelId, data]: [string, any]) => {
           const modelDiv = document.createElement('div');
           modelDiv.style.cssText = 'display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 12px;';
           const modelName = modelLookup[modelId] || modelId;
           modelDiv.innerHTML = `
             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 10px;" title="${modelName}">${modelName}</span>
-            <span>$${data.cost.toFixed(6)} (${data.requests} req)</span>
-          `;
+            <span>$${(data.cost || 0).toFixed(6)} (${data.requests || 0} req)</span>`;
           modelBreakdownList.appendChild(modelDiv);
         });
       } else {
@@ -190,27 +166,23 @@ document.addEventListener('DOMContentLoaded', async () => {
       
       allTimeBreakdownList.innerHTML = '';
       if (totalUsage.models && Object.keys(totalUsage.models).length > 0) {
-        const sortedAllTimeEntries = Object.entries(totalUsage.models).sort(([modelIdA], [modelIdB]) => {
-          const modelNameA = modelLookup[modelIdA] || modelIdA;
-          const modelNameB = modelLookup[modelIdB] || modelIdB;
-          return modelNameA.localeCompare(modelNameB);
-        });
-        
+        const sortedAllTimeEntries = Object.entries(totalUsage.models).sort(([modelIdA], [modelIdB]) => 
+          (modelLookup[modelIdA] || modelIdA).localeCompare(modelLookup[modelIdB] || modelIdB)
+        );
         sortedAllTimeEntries.forEach(([modelId, data]: [string, any]) => {
           const modelDiv = document.createElement('div');
           modelDiv.style.cssText = 'display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 12px;';
           const modelName = modelLookup[modelId] || modelId;
           modelDiv.innerHTML = `
             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 10px;" title="${modelName}">${modelName}</span>
-            <span>$${data.cost.toFixed(6)} (${data.requests} req)</span>
-          `;
+            <span>$${(data.cost || 0).toFixed(6)} (${data.requests || 0} req)</span>`;
           allTimeBreakdownList.appendChild(modelDiv);
         });
       } else {
         allTimeBreakdownList.innerHTML = '<div style="font-size: 12px; color: #999; text-align: center; padding: 10px;">No usage yet</div>';
       }
       
-      const hasUsageData = totalUsage.totalRequests > 0 || (totalUsage.models && Object.keys(totalUsage.models).length > 0);
+      const hasUsageData = (totalUsage.totalRequests || 0) > 0 || (totalUsage.models && Object.keys(totalUsage.models).length > 0);
       clearUsageBtn.disabled = !hasUsageData;
     } catch (error) {
       console.warn('Failed to load usage info:', error);
@@ -218,40 +190,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // loadStorageStats et loadCustomizedSites peuvent rester les mêmes.
-  // ... (copiez les fonctions loadStorageStats et loadCustomizedSites de l'original) ...
-  // La fonction showStatus peut rester la même.
-  // ... (copiez la fonction showStatus de l'original) ...
-
-  // Remplacez les fonctions copiées ici
   async function loadStorageStats() {
     try {
       const allStorage = await chrome.storage.local.get(null);
       const cssKeys = Object.keys(allStorage).filter(key => key.startsWith('pagemagic_css_'));
       const historyKeys = Object.keys(allStorage).filter(key => key.startsWith('pagemagic_history_'));
       
-      const domains = new Set();
+      const domains = new Set<string>();
       [...cssKeys, ...historyKeys].forEach(key => {
-        const urlPart = key.replace('pagemagic_css_', '').replace('pagemagic_history_', '');
-        try { // try-catch pour les clés mal formées
+        const urlPart = key.replace(/^pagemagic_(css|history)_/, '');
+        try {
             const url = new URL(urlPart.startsWith('http') ? urlPart : `https://${urlPart}`);
-            domains.add(url.origin); // Utilisez url.origin pour une meilleure agrégation par domaine
+            domains.add(url.origin);
         } catch (e) {
-            console.warn("Malformed URL key in storage:", key);
+            console.warn("Malformed URL key in storage for domain count:", key, e);
         }
       });
       
       let totalBytes = 0;
       Object.keys(allStorage).forEach(key => {
-        if (key.startsWith('pagemagic_')) { // Ne compte que les données de PageMagic
-          totalBytes += JSON.stringify(allStorage[key]).length + key.length; // Compter aussi la clé
+        if (key.startsWith('pagemagic_')) {
+          totalBytes += (JSON.stringify(allStorage[key]).length + key.length) * 2; // Approximation for UTF-16
         }
       });
       
       const formatSize = (bytes: number): string => {
-        if (bytes < 1024) return `${bytes} B`;
-        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
       };
       
       cssCount.textContent = cssKeys.length.toString();
@@ -263,16 +231,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       clearAllBtn.disabled = !hasData;
     } catch (error) {
       console.warn('Failed to load storage stats:', error);
-      cssCount.textContent = 'Error';
-      historyCount.textContent = 'Error';
-      domainCount.textContent = 'Error';
-      totalSize.textContent = 'Error';
+      ['cssCount', 'historyCount', 'domainCount', 'totalSize'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = 'Error';
+      });
       clearAllBtn.disabled = true; 
     }
   }
 
   async function loadCustomizedSites() {
     try {
+      customizedSitesList.innerHTML = '<div style="padding: 20px; text-align: center; color: #666; font-size: 14px;">Loading...</div>';
       const allStorage = await chrome.storage.local.get(null);
       const cssKeys = Object.keys(allStorage).filter(key => key.startsWith('pagemagic_css_'));
       
@@ -284,17 +253,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         let isPageSpecific = false;
         try {
             const url = new URL(rawUrlPart.startsWith('http') ? rawUrlPart : `https://${rawUrlPart}`);
-            displayUrl = url.href; // URL normalisée
+            displayUrl = url.href;
             isPageSpecific = url.pathname !== '/' && url.pathname !== '';
         } catch (e) {
-            console.warn("Malformed URL for site display:", rawUrlPart);
-            // displayUrl reste rawUrlPart
-            isPageSpecific = rawUrlPart.substring(rawUrlPart.indexOf('/')+2).includes('/');
+            console.warn("Malformed URL for site display in loadCustomizedSites:", rawUrlPart, e);
+            isPageSpecific = rawUrlPart.substring(rawUrlPart.indexOf('//') + 2).includes('/');
         }
         
         const cssData = allStorage[key];
-        const isEnabled = cssData && Array.isArray(cssData) && cssData.length > 0;
-        
+        const isEnabled = cssData && Array.isArray(cssData) && cssData.length > 0 && cssData[0] !== '/* Site disabled */';
         sites.set(rawUrlPart, { isEnabled, isPageSpecific, cssKey: key, displayUrl });
       });
 
@@ -304,81 +271,86 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       customizedSitesList.innerHTML = '';
+      const sortedSites = Array.from(sites.entries()).sort(([,aData], [,bData]) => 
+          aData.displayUrl.localeCompare(bData.displayUrl)
+      );
       
-      const sortedSites = Array.from(sites.entries()).sort(([aKey], [bKey]) => {
-          const aSite = sites.get(aKey)!.displayUrl;
-          const bSite = sites.get(bKey)!.displayUrl;
-          return aSite.localeCompare(bSite);
-      });
-      
-      sortedSites.forEach(([siteKey, data]) => { // siteKey est la clé de stockage, data.displayUrl est l'URL à afficher/utiliser
+      sortedSites.forEach(([siteKey, data]) => {
         const siteDiv = document.createElement('div');
         siteDiv.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 8px 15px; border-bottom: 1px solid #f0f0f0; font-size: 14px;';
         
         const siteInfo = document.createElement('div');
         siteInfo.style.cssText = 'flex: 1; min-width: 0; margin-right: 10px;';
         
-        const siteName = document.createElement('a');
-        siteName.href = data.displayUrl;
-        siteName.target = '_blank';
-        siteName.rel = 'noopener noreferrer';
-        siteName.style.cssText = 'font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1976d2; text-decoration: none; display: block;';
-        siteName.textContent = data.displayUrl;
-        siteName.title = data.displayUrl;
+        const siteNameLink = document.createElement('a');
+        siteNameLink.href = data.displayUrl;
+        siteNameLink.target = '_blank';
+        siteNameLink.rel = 'noopener noreferrer';
+        siteNameLink.style.cssText = 'font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1976d2; text-decoration: none; display: block;';
+        siteNameLink.textContent = data.displayUrl;
+        siteNameLink.title = data.displayUrl;
+        siteNameLink.addEventListener('mouseenter', () => { siteNameLink.style.textDecoration = 'underline'; });
+        siteNameLink.addEventListener('mouseleave', () => { siteNameLink.style.textDecoration = 'none'; });
         
-        siteName.addEventListener('mouseenter', () => { siteName.style.textDecoration = 'underline'; });
-        siteName.addEventListener('mouseleave', () => { siteName.style.textDecoration = 'none'; });
+        const siteTypeDiv = document.createElement('div');
+        siteTypeDiv.style.cssText = 'font-size: 12px; color: #666; margin-top: 2px;';
+        siteTypeDiv.textContent = data.isPageSpecific ? 'Specific page' : 'Entire domain';
         
-        const siteType = document.createElement('div');
-        siteType.style.cssText = 'font-size: 12px; color: #666; margin-top: 2px;';
-        siteType.textContent = data.isPageSpecific ? 'Specific page' : 'Entire domain';
-        
-        siteInfo.appendChild(siteName);
-        siteInfo.appendChild(siteType);
+        siteInfo.appendChild(siteNameLink);
+        siteInfo.appendChild(siteTypeDiv);
         
         const toggleButton = document.createElement('button');
-        toggleButton.style.cssText = `
-          background: ${data.isEnabled ? '#28a745' : '#6c757d'};
-          color: white; border: none; padding: 6px 12px; border-radius: 4px;
-          cursor: pointer; font-size: 12px; margin-left: 10px; flex-shrink: 0;`;
+        toggleButton.style.cssText = `background: ${data.isEnabled ? '#28a745' : '#6c757d'}; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-left: 10px; flex-shrink: 0;`;
         toggleButton.textContent = data.isEnabled ? 'Enabled' : 'Disabled';
         
-        const handleToggle = async () => { /* ... (même logique qu'avant) ... */ };
-        toggleButton.addEventListener('click', handleToggle);
-        // ... (même logique pour mouseenter/mouseleave) ...
+        toggleButton.addEventListener('click', async () => {
+          try {
+            toggleButton.disabled = true;
+            toggleButton.textContent = 'Updating...';
+            const historyKey = data.cssKey.replace('pagemagic_css_', 'pagemagic_history_');
+            const historyResult = await chrome.storage.local.get([historyKey]);
+            const history = historyResult[historyKey] || [];
 
+            if (data.isEnabled) { // If currently enabled, disable it
+              await chrome.storage.local.set({ [data.cssKey]: ['/* Site disabled */'] });
+            } else { // If currently disabled, re-enable it
+              const enabledHistoryCSS = history.filter((item: any) => !item.disabled).map((item: any) => item.css);
+              if (enabledHistoryCSS.length > 0) {
+                await chrome.storage.local.set({ [data.cssKey]: enabledHistoryCSS });
+              } else {
+                // If no active history items, remove the disabled marker to effectively enable an empty state
+                await chrome.storage.local.set({ [data.cssKey]: [] }); 
+              }
+            }
+            await loadCustomizedSites(); // Refresh the list
+          } catch (err) {
+            showStatus('Failed to toggle site status.', 'error');
+            console.error("Toggle site error:", err);
+            await loadCustomizedSites(); // Refresh to show original state
+          }
+        });
+        
         const deleteButton = document.createElement('button');
-        deleteButton.style.cssText = `
-          background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px;
-          cursor: pointer; font-size: 12px; margin-left: 8px; flex-shrink: 0;`;
+        deleteButton.style.cssText = `background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-left: 8px; flex-shrink: 0;`;
         deleteButton.textContent = 'Delete';
         
-        const handleDelete = async () => {
-          const confirmed = confirm(
-            `Are you sure you want to delete all customizations for "${data.displayUrl}"?\n\n` +
-            'This will permanently remove all CSS, prompt history, and data for this site/page.\n\n' +
-            'This action cannot be undone!'
-          );
+        deleteButton.addEventListener('click', async () => {
+          const confirmed = confirm(`Delete all customizations for "${data.displayUrl}"? This cannot be undone.`);
           if (!confirmed) return;
-          // ... (même logique qu'avant, mais utiliser data.cssKey) ...
-           try {
+          try {
             deleteButton.disabled = true;
             deleteButton.textContent = 'Deleting...';
             const historyKey = data.cssKey.replace('pagemagic_css_', 'pagemagic_history_');
             await chrome.storage.local.remove([data.cssKey, historyKey]);
             await loadCustomizedSites();
             await loadStorageStats();
-            showStatus(`Successfully deleted customizations for ${data.displayUrl}`, 'success');
-          } catch (error) {
-            console.warn('Failed to delete site:', error);
-            showStatus('Failed to delete site customizations', 'error');
-            await loadCustomizedSites(); // Recharger pour restaurer l'état
-          } finally {
-            // Le bouton sera recréé par loadCustomizedSites, donc pas besoin de réinitialiser ici
+            showStatus(`Deleted customizations for ${data.displayUrl}`, 'success');
+          } catch (err) {
+            showStatus('Failed to delete site customizations.', 'error');
+            console.error("Delete site error:", err);
+            await loadCustomizedSites();
           }
-        };
-        deleteButton.addEventListener('click', handleDelete);
-        // ... (même logique pour mouseenter/mouseleave) ...
+        });
 
         const buttonContainer = document.createElement('div');
         buttonContainer.style.cssText = 'display: flex; align-items: center;';
@@ -400,7 +372,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     status.textContent = message;
     status.className = `status ${type}`;
     status.style.display = 'block';
-    
     if (type === 'success') {
       setTimeout(() => {
         if (status.textContent === message) status.style.display = 'none';
@@ -408,42 +379,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-
   saveBtn.addEventListener('click', async () => {
     const apiKey = apiKeyInput.value.trim();
-    const selectedModel = modelSelect.value;
+    const selectedModelValue = modelSelect.value;
     
     if (!apiKey) {
       showStatus('Please enter an API key', 'error');
       return;
     }
-
-    // Modifié: sk-ant- -> sk-or-
     if (!apiKey.startsWith('sk-or-')) {
       showStatus('OpenRouter API key should start with sk-or-', 'error');
       return;
     }
-
-    if (!selectedModel && modelSelect.options.length > 0 && modelSelect.options[0].value !== "") {
-        // Si aucun modèle n'est sélectionné mais que la liste n'est pas vide (et pas "aucun modèle trouvé")
+    if (!selectedModelValue && modelSelect.options.length > 0 && modelSelect.options[0]?.value !== "") {
         showStatus('Please select a model', 'error');
         return;
     }
-    if (modelSelect.options.length === 0 || modelSelect.options[0].value === "") {
-        showStatus('No models available to select. Check API key and network.', 'error');
+     if (modelSelect.options.length === 0 || modelSelect.options[0]?.value === "") {
+        showStatus('No models available. Check API key or ensure models loaded.', 'error');
         return;
     }
 
-
     try {
-      // Modifié: anthropicApiKey -> openRouterApiKey
       await chrome.storage.sync.set({ 
         openRouterApiKey: apiKey,
-        selectedModel: selectedModel
+        selectedModel: selectedModelValue 
       });
-      result.openRouterApiKey = apiKey; // Mettre à jour la variable locale
-      result.selectedModel = selectedModel;
+      currentSettings.openRouterApiKey = apiKey;
+      currentSettings.selectedModel = selectedModelValue;
       showStatus('Settings saved successfully!', 'success');
+      // Re-check models if API key changed and was saved successfully
+      await loadModels();
     } catch (error) {
       showStatus('Failed to save settings', 'error');
     }
@@ -451,44 +417,38 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   testBtn.addEventListener('click', async () => {
     const apiKey = apiKeyInput.value.trim();
-    const selectedModel = modelSelect.value;
+    const selectedModelValue = modelSelect.value;
     
     if (!apiKey) {
       showStatus('Please enter an API key first', 'error');
       return;
     }
-    if (!selectedModel || modelSelect.options[0].value === "") {
-      showStatus('Please select a model first (or ensure models are loaded)', 'error');
+    if (!selectedModelValue || modelSelect.options[0]?.value === "") {
+      showStatus('Please select a model (or ensure models are loaded)', 'error');
       return;
     }
 
     testBtn.disabled = true;
     testBtn.textContent = 'Testing...';
-    status.style.display = 'none'; // Cacher le statut précédent
+    status.style.display = 'none';
 
     try {
-      // Modifié: anthropicApiKey -> openRouterApiKey
-      await chrome.storage.sync.set({ 
-        openRouterApiKey: apiKey,
-        selectedModel: selectedModel
-      });
-      
-      // Modifié: anthropicService -> openRouterService
+      // Temporarily set for the service to use, even if not saved yet
+      await chrome.storage.sync.set({ openRouterApiKey: apiKey, selectedModel: selectedModelValue });
       const initialized = await openRouterService.initialize();
       if (!initialized) {
-        throw new Error('Failed to initialize service with new key.');
+        throw new Error('Failed to initialize service with the provided key.');
       }
 
-      // Test CSS generation (plus besoin d'uploadHTML ou deleteFile)
       const response = await openRouterService.generateCSS({
-        htmlContent: '<body><p>Test paragraph.</p></body>', // Simple HTML
+        htmlContent: '<body><p>Test paragraph.</p></body>',
         prompt: 'make the paragraph text red'
       });
       
-      if (response.css && response.css.includes('red')) { // Vérification basique
+      if (response.css && response.css.toLowerCase().includes('red')) {
         showStatus('Connection successful!', 'success');
       } else {
-        throw new Error('No valid CSS returned or CSS did not seem to match prompt.');
+        throw new Error('Test failed: No valid CSS returned or CSS did not match prompt.');
       }
     } catch (error) {
       console.error("Test connection error:", error);
@@ -496,116 +456,85 @@ document.addEventListener('DOMContentLoaded', async () => {
     } finally {
       testBtn.disabled = false;
       testBtn.textContent = 'Test Connection';
+      // Restaurer les paramètres précédemment sauvegardés si le test n'implique pas de sauvegarde
+      await chrome.storage.sync.set({ 
+          openRouterApiKey: currentSettings.openRouterApiKey, 
+          selectedModel: currentSettings.selectedModel 
+      });
+      await openRouterService.initialize(); // Réinitialiser avec les paramètres sauvegardés
     }
   });
 
-  // Les fonctions clearAllBtn, clearUsageBtn, factoryResetBtn restent globalement les mêmes
-  // Assurez-vous juste que les clés de stockage (sync et local) sont correctement nettoyées.
-  // ... (copiez les listeners pour clearAllBtn, clearUsageBtn, factoryResetBtn de l'original,
-  //      en vérifiant que les clés de stockage sont bien `openRouterApiKey` etc.)
   clearAllBtn.addEventListener('click', async () => {
-    const confirmed = confirm(
-      'Are you sure you want to clear ALL CSS customizations from ALL websites?\n\n' +
-      'This will permanently remove all CSS changes, prompt history, and customization data.\n\n' +
-      'This action cannot be undone!'
-    );
-
+    const confirmed = confirm('Clear ALL CSS customizations and history from ALL websites? This cannot be undone.');
     if (!confirmed) return;
-
     clearAllBtn.disabled = true;
     clearAllBtn.textContent = 'Clearing...';
-
     try {
       const allStorage = await chrome.storage.local.get(null);
-      const keysToRemove: string[] = Object.keys(allStorage).filter(key => 
+      const keysToRemove = Object.keys(allStorage).filter(key => 
         key.startsWith('pagemagic_css_') || key.startsWith('pagemagic_history_')
       );
-
-      if (keysToRemove.length > 0) {
-        await chrome.storage.local.remove(keysToRemove);
-      }
-      showStatus(`Successfully cleared ${keysToRemove.length} items of CSS/history data`, 'success');
+      if (keysToRemove.length > 0) await chrome.storage.local.remove(keysToRemove);
+      showStatus(`Cleared ${keysToRemove.length} CSS/history items`, 'success');
+    } catch (e) { showStatus('Error clearing CSS data', 'error'); console.error(e); }
+    finally {
       await loadStorageStats();
       await loadCustomizedSites();
-    } catch (error) {
-      showStatus(`Failed to clear CSS data: ${(error instanceof Error ? error.message : 'Unknown error')}`, 'error');
-    } finally {
       clearAllBtn.textContent = 'Clear All CSS Data';
-      // L'état du bouton sera mis à jour par loadStorageStats()
+      // La désactivation sera gérée par loadStorageStats
     }
   });
 
   clearUsageBtn.addEventListener('click', async () => {
-    const confirmed = confirm(
-      'Are you sure you want to clear ALL usage data?\n\n' +
-      'This will permanently remove all daily/total usage statistics, model breakdowns, and cost tracking.\n\n' +
-      'This action cannot be undone!'
-    );
+    const confirmed = confirm('Clear ALL usage data (costs, requests, model breakdowns)? This cannot be undone.');
     if (!confirmed) return;
-
     clearUsageBtn.disabled = true;
     clearUsageBtn.textContent = 'Clearing...';
-
     try {
       const allStorage = await chrome.storage.local.get(null);
-      const keysToRemove: string[] = Object.keys(allStorage).filter(key =>
+      const keysToRemove = Object.keys(allStorage).filter(key =>
         key.startsWith('pagemagic_usage_') || 
         key === 'pagemagic_total_usage' ||
-        key === 'pagemagic_model_lookup' // Aussi nettoyer la table de lookup des modèles
+        key === 'pagemagic_model_lookup'
       );
-
-      if (keysToRemove.length > 0) {
-        await chrome.storage.local.remove(keysToRemove);
-      }
-      showStatus(`Successfully cleared ${keysToRemove.length} items of usage data`, 'success');
-      await loadUsageInfo(); // Cela mettra à jour l'état du bouton
-    } catch (error) {
-      showStatus(`Failed to clear usage data: ${(error instanceof Error ? error.message : 'Unknown error')}`, 'error');
-    } finally {
-      // Pas besoin de réinitialiser le texte/état ici, loadUsageInfo s'en charge
+      if (keysToRemove.length > 0) await chrome.storage.local.remove(keysToRemove);
+      showStatus(`Cleared ${keysToRemove.length} usage data items`, 'success');
+    } catch (e) { showStatus('Error clearing usage data', 'error'); console.error(e); }
+    finally {
+      await loadUsageInfo();
+      clearUsageBtn.textContent = 'Clear All Usage Data';
+      // La désactivation sera gérée par loadUsageInfo
     }
   });
 
   factoryResetBtn.addEventListener('click', async () => {
-    const confirmed = confirm(
-      'Are you sure you want to perform a factory reset?\n\n' +
-      'This will permanently remove your API key, selected model, all CSS customizations, prompt history, usage statistics, and all extension settings.\n\n' +
-      'This action cannot be undone!'
-    );
+    const confirmed = confirm('Factory reset ALL extension data (API key, settings, CSS, history, usage)? This cannot be undone.');
     if (!confirmed) return;
-
     factoryResetBtn.disabled = true;
     factoryResetBtn.textContent = 'Resetting...';
-
     try {
-      await chrome.storage.sync.clear(); // Nettoie API key, selected model
-
-      const allStorage = await chrome.storage.local.get(null);
-      const keysToRemove: string[] = Object.keys(allStorage).filter(key => key.startsWith('pagemagic_'));
+      await chrome.storage.sync.clear();
+      const allLocal = await chrome.storage.local.get(null);
+      const localKeysToRemove = Object.keys(allLocal).filter(k => k.startsWith('pagemagic_'));
+      if (localKeysToRemove.length > 0) await chrome.storage.local.remove(localKeysToRemove);
       
-      if (keysToRemove.length > 0) {
-        await chrome.storage.local.remove(keysToRemove);
-      }
-
-      showStatus('Factory reset complete. Please re-enter your API key.', 'success');
-      
+      currentSettings.openRouterApiKey = null;
+      currentSettings.selectedModel = null;
       apiKeyInput.value = '';
       modelSelect.innerHTML = '<option value="">No API Key found</option>';
       modelSelect.disabled = true;
       testBtn.disabled = true;
-      result.openRouterApiKey = null; // Mettre à jour la variable locale
-      result.selectedModel = null;
-
+      
+      showStatus('Factory reset complete. Please re-enter API key.', 'success');
+    } catch (e) { showStatus('Error during factory reset', 'error'); console.error(e); }
+    finally {
+      await loadModels(); // tentera de charger les modèles (échouera sans clé)
       await loadUsageInfo();
       await loadStorageStats();
       await loadCustomizedSites();
-      
-    } catch (error) {
-      showStatus(`Failed to perform factory reset: ${(error instanceof Error ? error.message : 'Unknown error')}`, 'error');
-    } finally {
       factoryResetBtn.disabled = false;
       factoryResetBtn.textContent = 'Factory Reset';
     }
   });
-
 });
